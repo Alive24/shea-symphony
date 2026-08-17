@@ -22,7 +22,7 @@ pub(crate) fn temporary_workflow_warning(workflow_path: &Path) -> Option<String>
         return None;
     }
     Some(format!(
-        "workflow_warning=temporary_path path={} action=promote durable_config=examples/ docs=docs/operator-dogfood.md",
+        "workflow_warning=temporary_path path={} action=promote durable_config=.shea/workflows/ docs=docs/operator-dogfood.md",
         workflow_path.display()
     ))
 }

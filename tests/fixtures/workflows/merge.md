@@ -6,7 +6,7 @@ tracker:
   project_owner: Alive24
   project_number: 9
   status_field: Status
-  fixture_path: fixtures/merge-issues.json
+  fixture_path: ../tracker/merge.json
   state_map:
     backlog: Backlog
     todo: Todo

@@ -1,0 +1,23 @@
+[
+  {
+    "tracker_kind": "github_project_v2",
+    "id": "GHI_llm_ready",
+    "item_id": "PVTI_llm_ready",
+    "identifier": "#1",
+    "title": "Exercise fixture LLM quality gate",
+    "description": "## Issue Goal\n\nExercise the optional LLM-assisted Issue Quality Gate fixture path.\n\n## Why Now\n\nShea Symphony needs deterministic local coverage for the LLM gate contract without hosted credentials.\n\n## Issue Context\n\nThe deterministic gate should pass first, then the configured fixture command should return structured LLM output.\n\n## Decisions / Assumptions\n\n### Decisions\n\n- Keep deterministic checks authoritative.\n\n### Assumptions\n\n- A shell fixture is enough for local LLM gate contract tests.\n\n## Non-Negotiable Guardrails\n\n- Do not call a hosted LLM provider.\n\n## Scope\n\n### In Scope\n\n- Run the fixture LLM gate command.\n\n### Out of Scope\n\n- Hosted provider SDK integration.\n\n## Canonical References\n\n### Target Repository / Package\n\n- Alive24/shea-symphony\n\n### Relevant Knowledge Sources\n\n- README.md\n\n### Relevant Code Paths\n\n- src/quality_gate.rs\n\n## Current State\n\nThe deterministic gate and LLM gate fixture command exist.\n\n## Deliverable Shape\n\nFixture verification only.\n\n## Risks or Constraints\n\n- The LLM gate must not bypass deterministic failures.\n\n## Expected Outcome\n\nThe fixture issue remains dispatchable and records LLM gate notes.\n\n## Verification\n\n### Completion Criteria\n\n- LLM fixture gate returns structured output.\n\n### Functional Verification\n\n- cargo test\n\n### UAT\n\n- Run `cargo run -- forge validate --workflow tests/fixtures/workflows/llm-gate.md '#1'`.\n\n### Context Verification\n\n- Confirm deterministic checks run before LLM output is applied.",
+    "url": "https://github.com/Alive24/shea-symphony/issues/1",
+    "state": "Todo",
+    "labels": ["quality-gate"],
+    "assignees": ["codex"],
+    "priority": 1,
+    "branch_name": null,
+    "linked_pull_requests": [],
+    "blocked_by": [],
+    "project_fields": {
+      "Status": "Todo"
+    },
+    "created_at": "2026-05-13T00:00:00Z",
+    "updated_at": "2026-05-13T00:00:00Z"
+  }
+]

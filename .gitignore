@@ -1,7 +1,5 @@
 **/.DS_Store
 /target/
-/examples/log/
-/examples/examples/log/
 /tmp/
 project_items.json
 .codex/config.toml

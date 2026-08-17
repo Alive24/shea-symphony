@@ -70,7 +70,7 @@ missing data, tolerate misspelled filters, or write partial workpad evidence.
 
 ## Validation Readback
 
-`cargo run -- validate workflows/shea-symphony.md` reports:
+`cargo run -- validate .shea/workflows/shea-symphony.md` reports:
 
 - `prompt_renderer=strict-liquid-compatible`;
 - `prompt_template_smoke.<lane>=pass` for each configured lane prompt;

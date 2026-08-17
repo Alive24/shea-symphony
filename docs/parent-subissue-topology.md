@@ -207,7 +207,7 @@ branch into `main`.
 The credential-free topology fixture lives at:
 
 ```text
-examples/fixtures/parent-subissue-topology.json
+tests/fixtures/topology/parent-subissue.json
 ```
 
 Run its focused verification with:

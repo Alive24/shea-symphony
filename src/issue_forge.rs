@@ -195,7 +195,11 @@ pub fn issue_skill_registry() -> Vec<IssueForgeSkill> {
                 "docs/bootstrap/SHEA_SYMPHONY_SPEC.md".into(),
                 "docs/dogfood-readiness.md".into(),
             ],
-            code_paths: vec!["examples/".into(), "tests/".into(), "src/tracker.rs".into()],
+            code_paths: vec![
+                "tests/fixtures/".into(),
+                "tests/".into(),
+                "src/tracker.rs".into(),
+            ],
             guardrails: vec![
                 "Keep live tests credential-gated and safe to skip locally.".into(),
                 "Preserve fixture-backed dry-run coverage.".into(),

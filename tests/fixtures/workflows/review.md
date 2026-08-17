@@ -1,12 +1,12 @@
 ---
 tracker:
-  kind: github_project_v2
+  kind: memory
   owner: Alive24
   repo: shea-symphony
   project_owner: Alive24
   project_number: 1
   status_field: Status
-  fixture_path: fixtures/promote-issues.json
+  fixture_path: ../tracker/review.json
   state_map:
     backlog: Backlog
     todo: Todo
@@ -18,15 +18,6 @@ tracker:
     rework: Rework
     merging: Merging
     done: Done
-  active_states:
-    - Todo
-    - Rework
-  terminal_states:
-    - Done
-    - Closed
-    - Cancelled
-    - Canceled
-    - Duplicate
   assignee_filter:
     source: issue_assignees
     allow_unassigned: true
@@ -34,8 +25,22 @@ tracker:
   workpad:
     source: issue_comment
     marker: "<!-- shea-symphony-workpad -->"
+polling:
+  interval_ms: 5000
+workspace:
+  root: /tmp/shea-symphony-review-workspaces
+main_lane:
+  backend: dry-run
+  max_concurrent_agents: 1
+  max_turns: 1
+  max_retry_backoff_ms: 300000
+review_lane:
+  backend: fake
+  gemini_command: gemini
+  timeout_ms: 600000
+  max_concurrent_workers: 2
 observability:
-  logs_root: /tmp/shea-symphony-promote-fixture-logs
+  logs_root: /tmp/shea-symphony-review-log
 ---
 
-Fixture workflow for dry-run Issue Forge promotion coverage.
+Review fixture workflow for Shea Symphony.

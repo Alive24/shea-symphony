@@ -60,14 +60,14 @@ failure semantics, and the no-remote-write local UAT.
 After preflight, dry-run mode executes the all-lane foreground preview:
 
 ```bash
-target/debug/shea-symphony autopilot loop workflows/shea-symphony.md --max-iterations 1 --dry-run
+target/debug/shea-symphony autopilot loop .shea/workflows/shea-symphony.md --max-iterations 1 --dry-run
 ```
 
 Use the unified read-only preflight before any write-mode dogfood:
 
 ```bash
-target/debug/shea-symphony autopilot plan workflows/shea-symphony.md
-target/debug/shea-symphony autopilot plan workflows/shea-symphony.md --json
+target/debug/shea-symphony autopilot plan .shea/workflows/shea-symphony.md
+target/debug/shea-symphony autopilot plan .shea/workflows/shea-symphony.md --json
 ```
 
 `autopilot plan` is not write-mode automation. It reuses the current Main,
@@ -99,8 +99,8 @@ For a more scannable operator view, keep the same dry-run boundary and opt into
 the terminal panel:
 
 ```bash
-target/debug/shea-symphony autopilot loop workflows/shea-symphony.md --max-iterations 1 --dry-run --display tui
-target/debug/shea-symphony main loop workflows/shea-symphony.md --max-iterations 1 --dry-run --display tui
+target/debug/shea-symphony autopilot loop .shea/workflows/shea-symphony.md --max-iterations 1 --dry-run --display tui
+target/debug/shea-symphony main loop .shea/workflows/shea-symphony.md --max-iterations 1 --dry-run --display tui
 ```
 
 The Autoloop TUI is still a foreground command, not a daemon. It renders Main,
@@ -129,10 +129,10 @@ explicit confirmation flag is present. Before that mutating foreground run, the
 launcher runs:
 
 ```bash
-target/debug/shea-symphony project state workflows/shea-symphony.md
-target/debug/shea-symphony autopilot plan workflows/shea-symphony.md
-target/debug/shea-symphony doctor workflows/shea-symphony.md
-target/debug/shea-symphony autopilot loop workflows/shea-symphony.md --max-iterations 1 --dry-run
+target/debug/shea-symphony project state .shea/workflows/shea-symphony.md
+target/debug/shea-symphony autopilot plan .shea/workflows/shea-symphony.md
+target/debug/shea-symphony doctor .shea/workflows/shea-symphony.md
+target/debug/shea-symphony autopilot loop .shea/workflows/shea-symphony.md --max-iterations 1 --dry-run
 ```
 
 If the normal preflight surfaces fail, the launcher exits before claiming
@@ -226,10 +226,10 @@ production-readiness claim.
 Start with readback and dry-run preflight:
 
 ```bash
-target/debug/shea-symphony project issue workflows/shea-symphony.md '#367' --json
-target/debug/shea-symphony project issue workflows/shea-symphony.md '#388' --json
-target/debug/shea-symphony debug workflows/shea-symphony.md
-target/debug/shea-symphony main loop workflows/shea-symphony.md --max-iterations 1 --dry-run
+target/debug/shea-symphony project issue .shea/workflows/shea-symphony.md '#367' --json
+target/debug/shea-symphony project issue .shea/workflows/shea-symphony.md '#388' --json
+target/debug/shea-symphony debug .shea/workflows/shea-symphony.md
+target/debug/shea-symphony main loop .shea/workflows/shea-symphony.md --max-iterations 1 --dry-run
 ```
 
 The preflight must show that #367 is terminal, #388's structured blocker is no
@@ -242,7 +242,7 @@ operator-blocked smoke evidence.
 Only then run the bounded live tick:
 
 ```bash
-target/debug/shea-symphony main loop workflows/shea-symphony.md --max-iterations 1 --write
+target/debug/shea-symphony main loop .shea/workflows/shea-symphony.md --max-iterations 1 --write
 ```
 
 A passing smoke leaves citeable evidence in the selected issue's Main Workpad,
@@ -267,16 +267,16 @@ child slices are merged into the parent integration path or visible on `main`.
 1. Run CLI preflight and capture the readiness lines:
 
 ```bash
-target/debug/shea-symphony project state workflows/shea-symphony.md
-target/debug/shea-symphony autopilot plan workflows/shea-symphony.md
-target/debug/shea-symphony doctor workflows/shea-symphony.md
+target/debug/shea-symphony project state .shea/workflows/shea-symphony.md
+target/debug/shea-symphony autopilot plan .shea/workflows/shea-symphony.md
+target/debug/shea-symphony doctor .shea/workflows/shea-symphony.md
 ```
 
 2. Run one dry-run iteration with intentionally uneven lane limits and capture
    stdout:
 
 ```bash
-target/debug/shea-symphony autopilot loop workflows/shea-symphony.md --max-iterations 1 --dry-run --main-max-concurrent 2 --review-max-concurrent 1 --merge-max-concurrent 3
+target/debug/shea-symphony autopilot loop .shea/workflows/shea-symphony.md --max-iterations 1 --dry-run --main-max-concurrent 2 --review-max-concurrent 1 --merge-max-concurrent 3
 ```
 
    Verify the output includes `order=main,review,merge`, separate
@@ -286,7 +286,7 @@ target/debug/shea-symphony autopilot loop workflows/shea-symphony.md --max-itera
    panel view:
 
 ```bash
-target/debug/shea-symphony autopilot loop workflows/shea-symphony.md --max-iterations 1 --dry-run --display tui --main-max-concurrent 2 --review-max-concurrent 1 --merge-max-concurrent 3
+target/debug/shea-symphony autopilot loop .shea/workflows/shea-symphony.md --max-iterations 1 --dry-run --display tui --main-max-concurrent 2 --review-max-concurrent 1 --merge-max-concurrent 3
 ```
 
    Verify Main, Review, and Merge cards remain separate, parked queues remain
@@ -296,7 +296,7 @@ target/debug/shea-symphony autopilot loop workflows/shea-symphony.md --max-itera
    bounded write tick:
 
 ```bash
-target/debug/shea-symphony autopilot loop workflows/shea-symphony.md --max-iterations 1 --write --main-max-concurrent 2 --review-max-concurrent 1 --merge-max-concurrent 3
+target/debug/shea-symphony autopilot loop .shea/workflows/shea-symphony.md --max-iterations 1 --write --main-max-concurrent 2 --review-max-concurrent 1 --merge-max-concurrent 3
 ```
 
    Verify the CLI logs and Tauri run-log view show one foreground supervisor
@@ -442,16 +442,16 @@ reviewed workspace content remains unchanged; they perform no GitHub or
 Project mutation.
 
 ```bash
-target/debug/shea-symphony review loop workflows/shea-symphony.md --max-iterations 1 --write
+target/debug/shea-symphony review loop .shea/workflows/shea-symphony.md --max-iterations 1 --write
 ```
 
 During supervised review-loop dogfood, use the read-only status surface before
 dropping to raw logs or process inspection:
 
 ```bash
-target/debug/shea-symphony review status workflows/shea-symphony.md
-target/debug/shea-symphony review status workflows/shea-symphony.md --issue '#<issue>' --recent 3 --verbose
-target/debug/shea-symphony review status workflows/shea-symphony.md --json
+target/debug/shea-symphony review status .shea/workflows/shea-symphony.md
+target/debug/shea-symphony review status .shea/workflows/shea-symphony.md --issue '#<issue>' --recent 3 --verbose
+target/debug/shea-symphony review status .shea/workflows/shea-symphony.md --json
 ```
 
 Default output is a compact table of running review slots and recent terminal
@@ -509,7 +509,7 @@ Manual review backend or operator-supplied review notes must be routed through
 manual evidence so operators can distinguish it from automatic `review loop`
 pass evidence.
 
-Use `workflows/shea-symphony.md` for supervised review workers. Do not keep the
+Use `.shea/workflows/shea-symphony.md` for supervised review workers. Do not keep the
 active review workflow only under `/tmp` or `/private/tmp`; the CLI prints
 `workflow_warning=temporary_path` for those workflow files so operators can
 promote reusable config into the repo.
@@ -571,14 +571,14 @@ local logs root. See [Repository Runtime Profiles](runtime-profiles.md).
 ## Inspect And Resume
 
 ```bash
-target/debug/shea-symphony project inspect workflows/shea-symphony.md '#<issue>'
-target/debug/shea-symphony project state workflows/shea-symphony.md
-target/debug/shea-symphony project issue workflows/shea-symphony.md '#235' --json
-target/debug/shea-symphony autopilot plan workflows/shea-symphony.md
-target/debug/shea-symphony debug workflows/shea-symphony.md
-target/debug/shea-symphony project state workflows/shea-symphony.md --display tui
-target/debug/shea-symphony doctor workflows/shea-symphony.md --display tui
-target/debug/shea-symphony autopilot loop workflows/shea-symphony.md --max-iterations 1 --write
+target/debug/shea-symphony project inspect .shea/workflows/shea-symphony.md '#<issue>'
+target/debug/shea-symphony project state .shea/workflows/shea-symphony.md
+target/debug/shea-symphony project issue .shea/workflows/shea-symphony.md '#235' --json
+target/debug/shea-symphony autopilot plan .shea/workflows/shea-symphony.md
+target/debug/shea-symphony debug .shea/workflows/shea-symphony.md
+target/debug/shea-symphony project state .shea/workflows/shea-symphony.md --display tui
+target/debug/shea-symphony doctor .shea/workflows/shea-symphony.md --display tui
+target/debug/shea-symphony autopilot loop .shea/workflows/shea-symphony.md --max-iterations 1 --write
 ```
 
 Use `project state` before claiming work when multiple operators are active. A
@@ -731,9 +731,9 @@ is not pass evidence.
 For a manual `agy`/operator review, claim and route through the CLI:
 
 ```bash
-target/debug/shea-symphony review claim workflows/shea-symphony.md '#226' --worker "Manual agy Review" --write
-target/debug/shea-symphony review pass workflows/shea-symphony.md '#226' --evidence-file /tmp/review-evidence.md --write
-target/debug/shea-symphony review reject workflows/shea-symphony.md '#226' --evidence-file /tmp/review-evidence.md --target-state rework --write
+target/debug/shea-symphony review claim .shea/workflows/shea-symphony.md '#226' --worker "Manual agy Review" --write
+target/debug/shea-symphony review pass .shea/workflows/shea-symphony.md '#226' --evidence-file /tmp/review-evidence.md --write
+target/debug/shea-symphony review reject .shea/workflows/shea-symphony.md '#226' --evidence-file /tmp/review-evidence.md --target-state rework --write
 ```
 
 The evidence file for `review pass` or `review reject` must include the exact
@@ -756,16 +756,16 @@ export SHEA_SYMPHONY_ARTIFACT_ROOT="$HOME/.shea-symphony/artifacts"
 
 The live operator workflow derives implementation and review worktree/log paths
 from that root. Existing temp Markdown files should be classified before
-cleanup: normal operator workflow config belongs in `workflows/`, fixtures and
-reference examples belong in `examples/`, reusable operator prompts belong in
-`docs/`, issue and PR drafts belong in tracker/workpad or log artifacts, and
+cleanup: normal operator workflow config belongs in `.shea/workflows/`, fixtures and
+test-only fixtures belong in `tests/fixtures/`, reusable operator prompts belong
+in `docs/`, issue and PR drafts belong in tracker/workpad or log artifacts, and
 disposable scratch can be removed only through a separate cleanup decision.
 
 Use the grouped `clean` surface for local cleanup and persistence questions:
 
 ```bash
-target/debug/shea-symphony clean plan workflows/shea-symphony.md
-target/debug/shea-symphony clean audit workflows/shea-symphony.md
+target/debug/shea-symphony clean plan .shea/workflows/shea-symphony.md
+target/debug/shea-symphony clean audit .shea/workflows/shea-symphony.md
 ```
 
 `clean plan` is the grouped form of the existing read-only cleanup plan, while
@@ -776,17 +776,17 @@ workflow states.
 
 Interrupted runtime recovery flow:
 
-1. Run `target/debug/shea-symphony status workflows/shea-symphony.md` and read
+1. Run `target/debug/shea-symphony status .shea/workflows/shea-symphony.md` and read
    the `runtime sessions` section for backend, session status, artifact path,
    attach command when available, and log.
-2. Run `target/debug/shea-symphony doctor workflows/shea-symphony.md` before
+2. Run `target/debug/shea-symphony doctor .shea/workflows/shea-symphony.md` before
    retrying or clearing runtime state; stale, failed, usage-limited, or
    unattributed sessions require operator inspection.
 3. For normal all-lane recovery, start with the same foreground Autoloop path:
 
 ```bash
-target/debug/shea-symphony autopilot plan workflows/shea-symphony.md
-target/debug/shea-symphony autopilot loop workflows/shea-symphony.md --max-iterations 1 --write
+target/debug/shea-symphony autopilot plan .shea/workflows/shea-symphony.md
+target/debug/shea-symphony autopilot loop .shea/workflows/shea-symphony.md --max-iterations 1 --write
 ```
 
 Autoloop (`autopilot loop --write`) uses recover-first handling for Main and Merge lanes by
@@ -798,7 +798,7 @@ one lane.
    run a bounded lane recovery tick:
 
 ```bash
-target/debug/shea-symphony main loop workflows/shea-symphony.md --max-iterations 1 --max-concurrent 3 --write
+target/debug/shea-symphony main loop .shea/workflows/shea-symphony.md --max-iterations 1 --max-concurrent 3 --write
 ```
 
 `main loop --write` restarts recoverable Main runtime slots as new attempts by
@@ -825,7 +825,7 @@ conservative operator pass.
    a bounded recovery tick:
 
 ```bash
-target/debug/shea-symphony merge loop workflows/shea-symphony.md --max-iterations 1 --max-concurrent 2 --write
+target/debug/shea-symphony merge loop .shea/workflows/shea-symphony.md --max-iterations 1 --max-concurrent 2 --write
 ```
 
 `merge loop --write` adopts interrupted structured merge-loop/goal claims first
@@ -834,7 +834,7 @@ alone, keeps safe stale-base refreshes or merge-lane repairs in `Merging`, and
 routes serious blockers to `Need Human Input` rather than `Rework`. Use
 `--no-recover` only for debugging or a deliberately conservative operator pass.
 
-6. Run `target/debug/shea-symphony clean audit workflows/shea-symphony.md` only
+6. Run `target/debug/shea-symphony clean audit .shea/workflows/shea-symphony.md` only
    after evidence is preserved. Active or uncertain sessions stay
    `needs_human_decision`; completed sessions and terminal clean worktrees may
    become cleanup candidates.
@@ -890,9 +890,9 @@ iteration counters, selected-none stops, already-queued skips, and bare
 you opt into verbose diagnostics.
 
 ```bash
-target/debug/shea-symphony main loop workflows/shea-symphony.md --max-iterations 1 --max-concurrent 2 --dry-run
-target/debug/shea-symphony autopilot loop workflows/shea-symphony.md --max-iterations 1 --dry-run
-target/debug/shea-symphony merge loop workflows/shea-symphony.md --max-iterations 1 --max-concurrent 2 --dry-run
+target/debug/shea-symphony main loop .shea/workflows/shea-symphony.md --max-iterations 1 --max-concurrent 2 --dry-run
+target/debug/shea-symphony autopilot loop .shea/workflows/shea-symphony.md --max-iterations 1 --dry-run
+target/debug/shea-symphony merge loop .shea/workflows/shea-symphony.md --max-iterations 1 --max-concurrent 2 --dry-run
 ```
 
 ## Logical Actor Audit
@@ -913,9 +913,9 @@ or authorization-shaped text is redacted before serialization.
 Cleanup planning is read-only:
 
 ```bash
-target/debug/shea-symphony clean plan workflows/shea-symphony.md
-target/debug/shea-symphony clean audit workflows/shea-symphony.md
-target/debug/shea-symphony clean plan workflows/shea-symphony.md
+target/debug/shea-symphony clean plan .shea/workflows/shea-symphony.md
+target/debug/shea-symphony clean audit .shea/workflows/shea-symphony.md
+target/debug/shea-symphony clean plan .shea/workflows/shea-symphony.md
 ```
 
 `clean plan` reports terminal worktrees that appear removable only when tracker

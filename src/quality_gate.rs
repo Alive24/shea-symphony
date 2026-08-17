@@ -1224,7 +1224,7 @@ mod tests {
             deterministic,
             &LlmGateOptions {
                 mode: LlmGateMode::Required,
-                command: Some("sh examples/fixtures/llm-gate-ready.sh".into()),
+                command: Some("sh tests/fixtures/quality-gate/ready.sh".into()),
                 timeout_ms: 5_000,
             },
         );
@@ -1247,7 +1247,7 @@ mod tests {
             GateDecision::ready(),
             &LlmGateOptions {
                 mode: LlmGateMode::Required,
-                command: Some("sh examples/fixtures/llm-gate-malformed.sh".into()),
+                command: Some("sh tests/fixtures/quality-gate/malformed.sh".into()),
                 timeout_ms: 5_000,
             },
         );
@@ -1271,7 +1271,7 @@ mod tests {
             GateDecision::ready(),
             &LlmGateOptions {
                 mode: LlmGateMode::Advisory,
-                command: Some("sh examples/fixtures/llm-gate-clarify.sh".into()),
+                command: Some("sh tests/fixtures/quality-gate/clarify.sh".into()),
                 timeout_ms: 5_000,
             },
         );
@@ -1296,7 +1296,7 @@ mod tests {
             deterministic,
             &LlmGateOptions {
                 mode: LlmGateMode::Required,
-                command: Some("sh examples/fixtures/llm-gate-ready.sh".into()),
+                command: Some("sh tests/fixtures/quality-gate/ready.sh".into()),
                 timeout_ms: 5_000,
             },
         );

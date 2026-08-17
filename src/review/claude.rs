@@ -558,6 +558,19 @@ esac
         }
     }
 
+    fn checked_in_protocol_backend(mode: &str) -> ClaudeCodeReviewBackend {
+        let wrapper = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/backends/claude-review/wrapper.sh");
+        ClaudeCodeReviewBackend {
+            command: format!(
+                "env SHEA_CLAUDE_REVIEW_FIXTURE={mode} {}",
+                wrapper.display()
+            ),
+            timeout_ms: 5_000,
+            runs: Arc::new(Mutex::new(BTreeMap::new())),
+        }
+    }
+
     fn request(temp: &tempfile::TempDir, workspace: &Path, identifier: &str) -> ReviewRequest {
         ReviewRequest {
             issue: issue(identifier),
@@ -588,11 +601,11 @@ esac
         let before = fs::read(workspace.join("tracked.txt")).unwrap();
 
         let pass = run(
-            &backend(&temp, "pass", 5_000),
+            &checked_in_protocol_backend("pass"),
             request(&temp, &workspace, "#514"),
         );
         let finding = run(
-            &backend(&temp, "finding", 5_000),
+            &checked_in_protocol_backend("finding"),
             request(&temp, &workspace, "#515"),
         );
 
@@ -611,9 +624,9 @@ esac
         let finding = &finding.report.as_ref().unwrap().findings[0];
         assert_eq!(finding.class, super::super::ReviewFindingClass::Confirmed);
         assert_eq!(finding.severity.as_deref(), Some("high"));
-        assert_eq!(finding.file.as_deref(), Some("src/lib.rs"));
-        assert_eq!(finding.line, Some(7));
-        assert_eq!(finding.evidence.as_deref(), Some("assert_eq failed"));
+        assert_eq!(finding.file.as_deref(), Some("tracked.txt"));
+        assert_eq!(finding.line, Some(1));
+        assert_eq!(finding.evidence.as_deref(), Some("Fixture evidence"));
         assert_eq!(fs::read(workspace.join("tracked.txt")).unwrap(), before);
     }
 

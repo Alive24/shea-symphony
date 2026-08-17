@@ -6,7 +6,7 @@ tracker:
   project_owner: Alive24
   project_number: 1
   status_field: Status
-  fixture_path: fixtures/llm-gate-issues.json
+  fixture_path: ../tracker/llm-gate.json
   state_map:
     backlog: Backlog
     todo: Todo
@@ -21,7 +21,7 @@ tracker:
 quality_gate:
   llm:
     mode: required
-    command: sh examples/fixtures/llm-gate-ready.sh
+    command: sh tests/fixtures/quality-gate/ready.sh
     timeout_ms: 5000
 main_lane:
   backend: dry-run

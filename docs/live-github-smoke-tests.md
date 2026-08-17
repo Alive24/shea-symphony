@@ -8,7 +8,7 @@ workflow. They are read-only / dry-run only in this slice, and ordinary
 
 - `gh` is installed.
 - `gh auth status` succeeds for the `Alive24/shea-symphony` repository.
-- The workflow at `workflows/shea-symphony.md` points at the intended
+- The workflow at `.shea/workflows/shea-symphony.md` points at the intended
   GitHub Project v2 tracker.
 
 No tokens or secrets are printed by the tests.
@@ -21,9 +21,9 @@ SHEA_LIVE_GITHUB_SMOKE=1 cargo test --test live_github_smoke
 
 The smoke runs:
 
-- `shea-symphony project inspect workflows/shea-symphony.md '#<issue>'`
-- `shea-symphony project state workflows/shea-symphony.md`
-- `shea-symphony main loop workflows/shea-symphony.md --max-iterations 1 --dry-run`
+- `shea-symphony project inspect .shea/workflows/shea-symphony.md '#<issue>'`
+- `shea-symphony project state .shea/workflows/shea-symphony.md`
+- `shea-symphony main loop .shea/workflows/shea-symphony.md --max-iterations 1 --dry-run`
 
 ## Expected Behavior
 

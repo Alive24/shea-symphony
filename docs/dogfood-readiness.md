@@ -38,11 +38,11 @@ The operator launcher runbook is in `docs/operator-dogfood.md`; it keeps write
 mode explicit through `scripts/shea-dogfood --write --confirm-write` and runs
 real preflight surfaces before a mutating tick.
 
-The live dogfood workflow definition lives in `workflows/shea-symphony.md`.
+The live dogfood workflow definition lives in `.shea/workflows/shea-symphony.md`.
 Temp Markdown files can still be useful for drafts, but reusable workflow config
-and operator prompts should be promoted into `workflows/`, `examples/`, or
-`docs/` before they become the canonical run path. Normal operator workflow
-config belongs in `workflows/`; `examples/` is fixture/reference material.
+and operator prompts should be promoted into `.shea/workflows/` or `docs/`
+before they become the canonical run path. Test-only workflow material belongs
+under `tests/fixtures/workflows/`, never in the operator configuration surface.
 
 Normal dogfood should exercise `project state`, `autopilot plan`,
 `autopilot loop`, `doctor`, `debug`, and related lane preflight surfaces
@@ -534,8 +534,8 @@ Acceptance:
 ## Dry-Run Dogfood Command
 
 ```bash
-cargo run -- examples/dry-run-workflow.md
-cargo run -- main loop examples/dry-run-workflow.md --max-iterations 1 --dry-run
+cargo run -- tests/fixtures/workflows/dry-run.md
+cargo run -- main loop tests/fixtures/workflows/dry-run.md --max-iterations 1 --dry-run
 ```
 
 These commands should remain credential-free and deterministic. They are the
@@ -544,7 +544,7 @@ GitHub Project v2 execution is hardened.
 
 ## Live Project Workflow
 
-`workflows/shea-symphony.md` is the canonical non-fixture workflow for manual
+`.shea/workflows/shea-symphony.md` is the canonical non-fixture workflow for manual
 live Project v2 reads and explicit tracker writes through `gh`. It uses the
 local `tmux` backend for supervised lane execution, while prompt bodies remain
 the real Shea Symphony dogfood operating contracts. `main loop --write` records

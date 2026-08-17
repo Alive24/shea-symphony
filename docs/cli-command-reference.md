@@ -7,7 +7,7 @@ order.
 All live tracker mutations require explicit `--write`. Fixture-backed workflows
 remain the preferred rehearsal path for local development. `doctor` can omit the
 workflow path when `SHEA_SYMPHONY_WORKFLOW` is set, or when
-`workflows/shea-symphony.md` exists in the current repo checkout.
+`.shea/workflows/shea-symphony.md` exists in the current repo checkout.
 
 For normal dogfood, Shea Symphony CLI is the authority for GitHub Project v2
 workflow reads and mutations. Direct `gh issue view` / `gh pr view` is still
@@ -31,21 +31,21 @@ resource failures are readiness failures and never fall back to embedded prose.
 
 | Command | Purpose | Example |
 | --- | --- | --- |
-| `plan` | Default dispatch/status plan for a workflow. | `cargo run -- plan examples/dry-run-workflow.md` |
-| `plan-dispatch` | Alias-style dispatch planning command. | `cargo run -- plan-dispatch examples/dry-run-workflow.md` |
-| `dry-run` | Compatibility alias for planning output. | `cargo run -- dry-run examples/dry-run-workflow.md` |
-| `status show` | Local runtime/session status snapshot; use `autopilot plan` for Project-backed planning. | `cargo run -- status show examples/dry-run-workflow.md` |
-| `validate` | Validate workflow loading/configuration. | `cargo run -- validate examples/dry-run-workflow.md` |
-| `validate-workflow` | Compatibility alias for `validate`. | `cargo run -- validate-workflow examples/dry-run-workflow.md` |
-| `project state` | Diagnose whether the canonical Project read path is trustworthy. | `cargo run -- project state workflows/shea-symphony.md` |
-| `project issue` | Read one issue's normalized Project state, fields, blockers, and linked PRs through Shea Symphony. | `cargo run -- project issue workflows/shea-symphony.md '#235' --json` |
-| `project inspect` | Inspect one live issue's readiness facts without tracker mutation. | `cargo run -- project inspect workflows/shea-symphony.md '#235'` |
+| `plan` | Default dispatch/status plan for a workflow. | `cargo run -- plan tests/fixtures/workflows/dry-run.md` |
+| `plan-dispatch` | Alias-style dispatch planning command. | `cargo run -- plan-dispatch tests/fixtures/workflows/dry-run.md` |
+| `dry-run` | Compatibility alias for planning output. | `cargo run -- dry-run tests/fixtures/workflows/dry-run.md` |
+| `status show` | Local runtime/session status snapshot; use `autopilot plan` for Project-backed planning. | `cargo run -- status show tests/fixtures/workflows/dry-run.md` |
+| `validate` | Validate workflow loading/configuration. | `cargo run -- validate tests/fixtures/workflows/dry-run.md` |
+| `validate-workflow` | Compatibility alias for `validate`. | `cargo run -- validate-workflow tests/fixtures/workflows/dry-run.md` |
+| `project state` | Diagnose whether the canonical Project read path is trustworthy. | `cargo run -- project state .shea/workflows/shea-symphony.md` |
+| `project issue` | Read one issue's normalized Project state, fields, blockers, and linked PRs through Shea Symphony. | `cargo run -- project issue .shea/workflows/shea-symphony.md '#235' --json` |
+| `project inspect` | Inspect one live issue's readiness facts without tracker mutation. | `cargo run -- project inspect .shea/workflows/shea-symphony.md '#235'` |
 | `doctor` | Audit Project/workflow/runtime invariants. | `cargo run -- doctor` |
-| `audit-project` | Compatibility alias for `doctor`. | `cargo run -- audit-project workflows/shea-symphony.md` |
+| `audit-project` | Compatibility alias for `doctor`. | `cargo run -- audit-project .shea/workflows/shea-symphony.md` |
 | `profiles` | List configured/discovered backend profiles and validate repository runtime readiness in the current worktree. | `shea-symphony profiles /absolute/path/to/.shea/workflows/target.md` |
-| `debug` | Read-only human report combining Project, doctor, smoke readiness, runtime/session, cleanup, and lane next-action signals. | `cargo run -- debug workflows/shea-symphony.md` |
-| `autopilot plan` | Read-only Main/Review/Merge lane preflight with parked operator queues and foreground Autoloop readiness. | `cargo run -- autopilot plan workflows/shea-symphony.md` |
-| `autopilot loop` | Bounded foreground all-lane supervisor tick that runs Main, Review, and Merge lane loops in order. | `cargo run -- autopilot loop workflows/shea-symphony.md --max-iterations 1 --write` |
+| `debug` | Read-only human report combining Project, doctor, smoke readiness, runtime/session, cleanup, and lane next-action signals. | `cargo run -- debug .shea/workflows/shea-symphony.md` |
+| `autopilot plan` | Read-only Main/Review/Merge lane preflight with parked operator queues and foreground Autoloop readiness. | `cargo run -- autopilot plan .shea/workflows/shea-symphony.md` |
+| `autopilot loop` | Bounded foreground all-lane supervisor tick that runs Main, Review, and Merge lane loops in order. | `cargo run -- autopilot loop .shea/workflows/shea-symphony.md --max-iterations 1 --write` |
 
 The Autoloop plan (`autopilot plan`) is the mandatory planning bridge before `autopilot loop`. It
 does not claim Project issues, launch Main/Review/Merge workers, start sessions,
@@ -55,8 +55,8 @@ compact row for Main, Review, and Merge, plus parked `Human Review`,
 stable preflight shape foreground automation should consume:
 
 ```bash
-cargo run -- autopilot plan workflows/shea-symphony.md
-cargo run -- autopilot plan workflows/shea-symphony.md --json
+cargo run -- autopilot plan .shea/workflows/shea-symphony.md
+cargo run -- autopilot plan .shea/workflows/shea-symphony.md --json
 ```
 
 Readiness is explicit: `ready`, `idle_but_healthy`,
@@ -112,12 +112,12 @@ provided:
 - `merge_lane.max_concurrent_workers` -> `--merge-max-concurrent`
 
 ```bash
-cargo run -- autopilot loop workflows/shea-symphony.md --max-iterations 1 --dry-run
-cargo run -- autopilot loop workflows/shea-symphony.md --max-iterations 1 --write
-cargo run -- autopilot loop workflows/shea-symphony.md --max-iterations 1 --dry-run --display tui
-cargo run -- autopilot loop workflows/shea-symphony.md --once --dry-run --json
-cargo run -- autopilot loop workflows/shea-symphony.md --max-iterations 3 --write --poll-interval-ms 30000
-cargo run -- autopilot loop workflows/shea-symphony.md --max-iterations 1 --write --main-max-concurrent 2 --review-max-concurrent 1 --merge-max-concurrent 3
+cargo run -- autopilot loop .shea/workflows/shea-symphony.md --max-iterations 1 --dry-run
+cargo run -- autopilot loop .shea/workflows/shea-symphony.md --max-iterations 1 --write
+cargo run -- autopilot loop .shea/workflows/shea-symphony.md --max-iterations 1 --dry-run --display tui
+cargo run -- autopilot loop .shea/workflows/shea-symphony.md --once --dry-run --json
+cargo run -- autopilot loop .shea/workflows/shea-symphony.md --max-iterations 3 --write --poll-interval-ms 30000
+cargo run -- autopilot loop .shea/workflows/shea-symphony.md --max-iterations 1 --write --main-max-concurrent 2 --review-max-concurrent 1 --merge-max-concurrent 3
 ```
 
 Normal dogfood should run `autopilot plan` first, then `autopilot loop --write`
@@ -140,10 +140,10 @@ for operator habit without requiring `--write`. Mutating commands require
 `--write` and verify readback after adding the native relationship:
 
 ```bash
-cargo run -- project relationship list workflows/shea-symphony.md '#123' --dry-run
-cargo run -- project relationship verify workflows/shea-symphony.md '#123' --blocked-by '#122' --subissue '#124'
-cargo run -- project relationship add-blocked-by workflows/shea-symphony.md '#123' '#122' --write
-cargo run -- project relationship add-subissue workflows/shea-symphony.md '#120' '#123' --write
+cargo run -- project relationship list .shea/workflows/shea-symphony.md '#123' --dry-run
+cargo run -- project relationship verify .shea/workflows/shea-symphony.md '#123' --blocked-by '#122' --subissue '#124'
+cargo run -- project relationship add-blocked-by .shea/workflows/shea-symphony.md '#123' '#122' --write
+cargo run -- project relationship add-subissue .shea/workflows/shea-symphony.md '#120' '#123' --write
 ```
 
 ## Long-Running Command Progress
@@ -209,15 +209,15 @@ evidence and runs `gh pr ready`; `doctor --auto-fix` never marks PRs ready.
 Examples:
 
 ```bash
-cargo run -- main once examples/dry-run-workflow.md
-cargo run -- autopilot plan workflows/shea-symphony.md
-cargo run -- autopilot loop workflows/shea-symphony.md --max-iterations 1 --write
-cargo run -- main loop examples/dry-run-workflow.md --max-iterations 1 --dry-run
-cargo run -- main loop examples/dry-run-workflow.md --max-iterations 1 --dry-run --display tui
-cargo run -- main loop workflows/shea-symphony.md --max-iterations 1 --max-concurrent 2 --dry-run
-cargo run -- main loop workflows/shea-symphony.md --max-iterations 1 --max-concurrent 3 --write
-cargo run -- clean plan workflows/shea-symphony.md
-cargo run -- clean audit workflows/shea-symphony.md
+cargo run -- main once tests/fixtures/workflows/dry-run.md
+cargo run -- autopilot plan .shea/workflows/shea-symphony.md
+cargo run -- autopilot loop .shea/workflows/shea-symphony.md --max-iterations 1 --write
+cargo run -- main loop tests/fixtures/workflows/dry-run.md --max-iterations 1 --dry-run
+cargo run -- main loop tests/fixtures/workflows/dry-run.md --max-iterations 1 --dry-run --display tui
+cargo run -- main loop .shea/workflows/shea-symphony.md --max-iterations 1 --max-concurrent 2 --dry-run
+cargo run -- main loop .shea/workflows/shea-symphony.md --max-iterations 1 --max-concurrent 3 --write
+cargo run -- clean plan .shea/workflows/shea-symphony.md
+cargo run -- clean audit .shea/workflows/shea-symphony.md
 ```
 
 Use `--display tui` for an opt-in operator panel on focused `main loop`,
@@ -289,9 +289,9 @@ the lane claim Project field, create a matching `codex-app-manual` registry
 record with status `recorded`, and do not change Project Status:
 
 ```bash
-cargo run -- main claim workflows/shea-symphony.md '#265' --worker codex-manual-main --write
-cargo run -- review claim workflows/shea-symphony.md '#265' --worker "Manual agy Review" --write
-cargo run -- merge claim workflows/shea-symphony.md '#265' --worker codex-manual-merge --write
+cargo run -- main claim .shea/workflows/shea-symphony.md '#265' --worker codex-manual-main --write
+cargo run -- review claim .shea/workflows/shea-symphony.md '#265' --worker "Manual agy Review" --write
+cargo run -- merge claim .shea/workflows/shea-symphony.md '#265' --worker codex-manual-merge --write
 ```
 
 For parent tracking issues with native GitHub subissues, `main claim` uses the
@@ -407,11 +407,11 @@ Main Workpad evidence, timeline comments, and local `git worktree list --porcela
 Examples:
 
 ```bash
-cargo run -- workspace list workflows/shea-symphony.md
-cargo run -- workspace show workflows/shea-symphony.md '#253'
-cargo run -- workspace adopt workflows/shea-symphony.md '#253' /tmp/shea-symphony-issue-253 --write
-cargo run -- workspace ensure workflows/shea-symphony.md '#253' --dry-run
-cargo run -- workspace ensure workflows/shea-symphony.md '#253' --pr 254 --write
+cargo run -- workspace list .shea/workflows/shea-symphony.md
+cargo run -- workspace show .shea/workflows/shea-symphony.md '#253'
+cargo run -- workspace adopt .shea/workflows/shea-symphony.md '#253' /tmp/shea-symphony-issue-253 --write
+cargo run -- workspace ensure .shea/workflows/shea-symphony.md '#253' --dry-run
+cargo run -- workspace ensure .shea/workflows/shea-symphony.md '#253' --pr 254 --write
 ```
 
 Review lane uses discovered worktrees for read-only inspection by default.
@@ -466,9 +466,9 @@ they are idempotence confirmations rather than operator actions.
 Examples:
 
 ```bash
-cargo run -- project set-state workflows/shea-symphony.md '#123' need_to_clarify --write
-cargo run -- project workpad workflows/shea-symphony.md '#123' /tmp/workpad.md --write
-cargo run -- project timeline-comment workflows/shea-symphony.md '#123' /tmp/human-review-note.md --write
+cargo run -- project set-state .shea/workflows/shea-symphony.md '#123' need_to_clarify --write
+cargo run -- project workpad .shea/workflows/shea-symphony.md '#123' /tmp/workpad.md --write
+cargo run -- project timeline-comment .shea/workflows/shea-symphony.md '#123' /tmp/human-review-note.md --write
 ```
 
 ## Clean Lane
@@ -485,8 +485,8 @@ invariants, and repair evidence.
 Examples:
 
 ```bash
-cargo run -- clean plan workflows/shea-symphony.md
-cargo run -- clean audit workflows/shea-symphony.md
+cargo run -- clean plan .shea/workflows/shea-symphony.md
+cargo run -- clean audit .shea/workflows/shea-symphony.md
 ```
 
 ## Issue Readiness And Contract Validation
@@ -499,8 +499,8 @@ cargo run -- clean audit workflows/shea-symphony.md
 Examples:
 
 ```bash
-cargo run -- forge validate --workflow workflows/shea-symphony.md --issue '#123'
-cargo run -- project inspect workflows/shea-symphony.md '#123'
+cargo run -- forge validate --workflow .shea/workflows/shea-symphony.md --issue '#123'
+cargo run -- project inspect .shea/workflows/shea-symphony.md '#123'
 ```
 
 ## Issue Forge
@@ -515,16 +515,16 @@ cargo run -- project inspect workflows/shea-symphony.md '#123'
 Examples:
 
 ```bash
-cargo run -- forge validate --workflow workflows/shea-symphony.md --status Backlog --title "Backlog seed" --body-file /tmp/issue.md
-cargo run -- forge validate --workflow workflows/shea-symphony.md --status Todo --title "Executable issue" --body-file /tmp/issue.md
-cargo run -- forge validate --workflow workflows/shea-symphony.md --issue '#293' --status Todo --title "Candidate promoted title" --body-file /tmp/candidate.md
-cargo run -- forge create --workflow workflows/shea-symphony.md --status Backlog --title "Backlog: follow-up title" --body-file /tmp/issue.md --dry-run
-cargo run -- forge create --workflow workflows/shea-symphony.md --status Todo --title "Follow-up title" --body-file /tmp/issue.md --assignee Alive24 --write
-cargo run -- forge create --workflow workflows/shea-symphony.md --status Todo --title "Blocked follow-up title" --body-file /tmp/issue.md --assignee Alive24 --blocked-by '#122' --dry-run
-cargo run -- forge promote '#241' --workflow workflows/shea-symphony.md --title "Executable title" --body-file /tmp/issue.md --operator-confirmation "promote it" --decision "Use the CLI-owned promotion note template." --scope-change "Backlog seed is now an executable Todo issue." --dependency-context "Dependencies: none; related context is non-blocking." --readback-summary "Operator confirmed the dry-run preview before write." --dry-run
-cargo run -- forge promote '#241' --workflow workflows/shea-symphony.md --title "Executable title" --body-file /tmp/issue.md --operator-confirmation "promote it" --decision "Use the CLI-owned promotion note template." --scope-change "Backlog seed is now an executable Todo issue." --dependency-context "Blocked by #122 until the prerequisite lands." --blocked-by '#122' --readback-summary "Operator confirmed the dry-run preview before write." --dry-run
-cargo run -- forge promote '#241' --workflow examples/promote-fixture-workflow.md --title "Harden Issue Forge promotion fixture" --body-file examples/fixtures/promoted-issue.md --operator-confirmation "promote it" --decision "Keep the promotion in place." --scope-change "Backlog seed becomes an executable Todo issue." --dependency-context "Dependencies: none." --readback-summary "Dry-run preview verified before write." --dry-run
-cargo run -- forge rework '#282' --workflow workflows/shea-symphony.md --title "Rework: revised execution contract" --body-file /tmp/rework-body.md --evidence-file /tmp/rework-evidence.md --operator-confirmation "route Human Review back to Rework" --dry-run
+cargo run -- forge validate --workflow .shea/workflows/shea-symphony.md --status Backlog --title "Backlog seed" --body-file /tmp/issue.md
+cargo run -- forge validate --workflow .shea/workflows/shea-symphony.md --status Todo --title "Executable issue" --body-file /tmp/issue.md
+cargo run -- forge validate --workflow .shea/workflows/shea-symphony.md --issue '#293' --status Todo --title "Candidate promoted title" --body-file /tmp/candidate.md
+cargo run -- forge create --workflow .shea/workflows/shea-symphony.md --status Backlog --title "Backlog: follow-up title" --body-file /tmp/issue.md --dry-run
+cargo run -- forge create --workflow .shea/workflows/shea-symphony.md --status Todo --title "Follow-up title" --body-file /tmp/issue.md --assignee Alive24 --write
+cargo run -- forge create --workflow .shea/workflows/shea-symphony.md --status Todo --title "Blocked follow-up title" --body-file /tmp/issue.md --assignee Alive24 --blocked-by '#122' --dry-run
+cargo run -- forge promote '#241' --workflow .shea/workflows/shea-symphony.md --title "Executable title" --body-file /tmp/issue.md --operator-confirmation "promote it" --decision "Use the CLI-owned promotion note template." --scope-change "Backlog seed is now an executable Todo issue." --dependency-context "Dependencies: none; related context is non-blocking." --readback-summary "Operator confirmed the dry-run preview before write." --dry-run
+cargo run -- forge promote '#241' --workflow .shea/workflows/shea-symphony.md --title "Executable title" --body-file /tmp/issue.md --operator-confirmation "promote it" --decision "Use the CLI-owned promotion note template." --scope-change "Backlog seed is now an executable Todo issue." --dependency-context "Blocked by #122 until the prerequisite lands." --blocked-by '#122' --readback-summary "Operator confirmed the dry-run preview before write." --dry-run
+cargo run -- forge promote '#241' --workflow tests/fixtures/workflows/promote.md --title "Harden Issue Forge promotion fixture" --body-file tests/fixtures/issues/promoted.md --operator-confirmation "promote it" --decision "Keep the promotion in place." --scope-change "Backlog seed becomes an executable Todo issue." --dependency-context "Dependencies: none." --readback-summary "Dry-run preview verified before write." --dry-run
+cargo run -- forge rework '#282' --workflow .shea/workflows/shea-symphony.md --title "Rework: revised execution contract" --body-file /tmp/rework-body.md --evidence-file /tmp/rework-evidence.md --operator-confirmation "route Human Review back to Rework" --dry-run
 ```
 
 Successful `forge create --write` output is a single parseable line. It keeps
@@ -665,16 +665,16 @@ workspace mutation fail closed.
 Example:
 
 ```bash
-cargo run -- review loop examples/review-fixture-workflow.md --max-iterations 1 --dry-run
-cargo run -- review loop workflows/shea-symphony.md --max-iterations 1 --write
-cargo run -- review status workflows/shea-symphony.md
-cargo run -- review status workflows/shea-symphony.md --issue '#226' --recent 3 --verbose
-cargo run -- review status workflows/shea-symphony.md --json
-cargo run -- review claim workflows/shea-symphony.md '#226' --worker "Manual agy Review" --write
-cargo run -- session start workflows/shea-symphony.md '#226' --lane review --run <RUN_ID> --write
-cargo run -- session list workflows/shea-symphony.md
-cargo run -- review pass workflows/shea-symphony.md '#226' --evidence-file /tmp/review-evidence.md --write
-cargo run -- review reject workflows/shea-symphony.md '#226' --evidence-file /tmp/review-evidence.md --target-state rework --write
+cargo run -- review loop tests/fixtures/workflows/review.md --max-iterations 1 --dry-run
+cargo run -- review loop .shea/workflows/shea-symphony.md --max-iterations 1 --write
+cargo run -- review status .shea/workflows/shea-symphony.md
+cargo run -- review status .shea/workflows/shea-symphony.md --issue '#226' --recent 3 --verbose
+cargo run -- review status .shea/workflows/shea-symphony.md --json
+cargo run -- review claim .shea/workflows/shea-symphony.md '#226' --worker "Manual agy Review" --write
+cargo run -- session start .shea/workflows/shea-symphony.md '#226' --lane review --run <RUN_ID> --write
+cargo run -- session list .shea/workflows/shea-symphony.md
+cargo run -- review pass .shea/workflows/shea-symphony.md '#226' --evidence-file /tmp/review-evidence.md --write
+cargo run -- review reject .shea/workflows/shea-symphony.md '#226' --evidence-file /tmp/review-evidence.md --target-state rework --write
 ```
 
 Manual review evidence files must include the exact structured `Review Agent`
@@ -765,10 +765,10 @@ Backlog or Improve.
 Examples:
 
 ```bash
-cargo run -- merge once workflows/shea-symphony.md --dry-run
-cargo run -- merge loop examples/merge-fixture-workflow.md --max-iterations 1 --write
-cargo run -- merge loop examples/merge-conflict-repair-fixture-workflow.md --max-iterations 1 --write
-cargo run -- merge loop workflows/shea-symphony.md --max-iterations 2 --max-concurrent 2 --write
+cargo run -- merge once .shea/workflows/shea-symphony.md --dry-run
+cargo run -- merge loop tests/fixtures/workflows/merge.md --max-iterations 1 --write
+cargo run -- merge loop tests/fixtures/workflows/merge-conflict-repair.md --max-iterations 1 --write
+cargo run -- merge loop .shea/workflows/shea-symphony.md --max-iterations 2 --max-concurrent 2 --write
 ```
 
 `merge once` is separate from main implementation and review work. It should
@@ -790,7 +790,7 @@ pass.
 
 ## Live Dogfood Boundary
 
-Use `workflows/shea-symphony.md` for Project #9 live reads and explicit
+Use `.shea/workflows/shea-symphony.md` for Project #9 live reads and explicit
 writes. Before running live write commands, confirm:
 
 - the issue contract passes the Issue Quality Gate;

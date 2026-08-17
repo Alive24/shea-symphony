@@ -1,0 +1,35 @@
+[
+  {
+    "tracker_kind": "memory",
+    "id": "GHI_merge_dirty_repair",
+    "item_id": "PVTI_merge_dirty_repair",
+    "identifier": "#9102",
+    "title": "Merge-conflict repair fixture issue",
+    "description": "## Issue Setup\n\n- UAT Required: Yes\n\n## Issue Goal\n\nExercise the merge lane write-mode path for a dirty PR that can be handled as safe merge-lane repair.\n\n## Issue Context\n\nThis issue is loaded by `tests/fixtures/workflows/merge-conflict-repair.md`. It is already in `Merging` and carries fixture linked pull request metadata with `merge_state_status: DIRTY` so the merge lane can rehearse conflict-repair evidence without touching a live branch.\n\n## Non-Negotiable Guardrails\n\n- Do not perform live GitHub or git branch mutation from this fixture.\n- Keep the issue in `Merging` after synthetic repair so a later pass can re-evaluate mergeability.\n- Route non-fixture dirty PRs to human input if a clean local PR worktree and safe repair path are not available.\n\n## Scope\n\n### In Scope\n\n- Controlled fixture-mode `DIRTY` repair rehearsal.\n- Durable merge attempt evidence before any state mutation.\n\n### Out of Scope\n\n- Live conflict resolution.\n- Product-scope changes.\n\n## Verification\n\n### Completion Criteria\n\n- `cargo run -- merge loop tests/fixtures/workflows/merge-conflict-repair.md --max-iterations 1 --write` reports `safe_conflict_repaired` and keeps the issue in `Merging`.\n\n### Functional Verification\n\n- `cargo test merge_lane`\n- `cargo fmt --check`\n\n### UAT\n\n- Run the controlled write-mode conflict repair fixture rehearsal.",
+    "url": "https://github.com/Alive24/shea-symphony/issues/9102",
+    "state": "Merging",
+    "labels": ["fixture", "merge", "conflict-repair"],
+    "assignees": ["codex"],
+    "priority": 1,
+    "branch_name": "feature/issue-9102-merge-conflict-fixture",
+    "linked_pull_requests": [
+      {
+        "id": "PR_merge_dirty_repair",
+        "number": 9102,
+        "url": "https://github.com/Alive24/shea-symphony/pull/9102",
+        "state": "OPEN",
+        "is_draft": false,
+        "merge_state_status": "DIRTY",
+        "review_decision": "APPROVED",
+        "base_ref_name": "main",
+        "head_ref_name": "feature/issue-9102-merge-conflict-fixture"
+      }
+    ],
+    "blocked_by": [],
+    "project_fields": {
+      "Status": "Merging"
+    },
+    "created_at": "2026-05-19T00:00:00Z",
+    "updated_at": "2026-05-19T00:00:00Z"
+  }
+]

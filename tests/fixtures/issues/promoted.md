@@ -48,9 +48,9 @@ The Backlog seed is non-dispatchable until an operator confirms promotion and su
 
 - src/main.rs
 - src/quality_gate.rs
-- examples/promote-fixture-workflow.md
-- examples/fixtures/promote-issues.json
-- examples/fixtures/promoted-issue.md
+- tests/fixtures/workflows/promote.md
+- tests/fixtures/tracker/promote.json
+- tests/fixtures/issues/promoted.md
 
 ## Current State
 
@@ -78,7 +78,7 @@ A dry-run promotion report with a structured Promotion Note preview.
 
 ### Functional Verification
 
-- [ ] `cargo run -- forge promote '#241' --workflow examples/promote-fixture-workflow.md --title "Harden Issue Forge promotion fixture" --body-file examples/fixtures/promoted-issue.md --operator-confirmation "promote it" --decision "Keep the promotion in place." --scope-change "Backlog seed becomes an executable Todo issue." --dependency-context "Dependencies: none." --readback-summary "Dry-run preview verified before write." --dry-run`
+- [ ] `cargo run -- forge promote '#241' --workflow tests/fixtures/workflows/promote.md --title "Harden Issue Forge promotion fixture" --body-file tests/fixtures/issues/promoted.md --operator-confirmation "promote it" --decision "Keep the promotion in place." --scope-change "Backlog seed becomes an executable Todo issue." --dependency-context "Dependencies: none." --readback-summary "Dry-run preview verified before write." --dry-run`
 - [ ] `cargo test`
 
 ### UAT

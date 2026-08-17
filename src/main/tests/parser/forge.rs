@@ -6,7 +6,7 @@ fn parses_forge_create_flags() {
         "forge".into(),
         "create".into(),
         "--workflow".into(),
-        "examples/dry-run-workflow.md".into(),
+        "fixtures/test-workflow.md".into(),
         "--title".into(),
         "Create issue".into(),
         "--body".into(),
@@ -39,7 +39,7 @@ fn parses_forge_create_flags() {
         panic!("expected forge create command");
     };
 
-    assert_eq!(workflow_path, PathBuf::from("examples/dry-run-workflow.md"));
+    assert_eq!(workflow_path, PathBuf::from("fixtures/test-workflow.md"));
     assert_eq!(title, "Create issue");
     assert!(markdown.contains("## Issue Goal"));
     assert_eq!(status, ForgeStatusArg::Todo);
@@ -64,7 +64,7 @@ fn parses_forge_promote_flags() {
         "promote".into(),
         "#241".into(),
         "--workflow".into(),
-        "examples/dry-run-workflow.md".into(),
+        "fixtures/test-workflow.md".into(),
         "--title".into(),
         "Promoted issue".into(),
         "--body".into(),
@@ -97,7 +97,7 @@ fn parses_forge_promote_flags() {
         panic!("expected forge promote command");
     };
 
-    assert_eq!(workflow_path, PathBuf::from("examples/dry-run-workflow.md"));
+    assert_eq!(workflow_path, PathBuf::from("fixtures/test-workflow.md"));
     assert_eq!(issue_ref, "#241");
     assert_eq!(title, "Promoted issue");
     assert!(markdown.contains("## Issue Goal"));
@@ -128,7 +128,7 @@ fn parses_forge_rework_flags() {
         "rework".into(),
         "#282".into(),
         "--workflow".into(),
-        "examples/dry-run-workflow.md".into(),
+        "fixtures/test-workflow.md".into(),
         "--title".into(),
         "Reworked contract".into(),
         "--body-file".into(),
@@ -147,7 +147,7 @@ fn parses_forge_rework_flags() {
 
     assert_eq!(
         options.workflow_path,
-        PathBuf::from("examples/dry-run-workflow.md")
+        PathBuf::from("fixtures/test-workflow.md")
     );
     assert_eq!(options.issue_ref, "#282");
     assert_eq!(options.title, "Reworked contract");
@@ -163,7 +163,7 @@ fn parses_link_pr_flags() {
     let command = Command::parse(vec![
         "project".into(),
         "link-pr".into(),
-        "examples/github-project-workflow.md".into(),
+        "config/WORKFLOW.md".into(),
         "#127".into(),
         "https://github.com/Alive24/shea-symphony/pull/128".into(),
         "--write".into(),
@@ -180,10 +180,7 @@ fn parses_link_pr_flags() {
         panic!("expected link-pr command");
     };
 
-    assert_eq!(
-        workflow_path,
-        PathBuf::from("examples/github-project-workflow.md")
-    );
+    assert_eq!(workflow_path, PathBuf::from("config/WORKFLOW.md"));
     assert_eq!(issue_ref, "#127");
     assert_eq!(pr_ref, "https://github.com/Alive24/shea-symphony/pull/128");
     assert!(write);
@@ -195,7 +192,7 @@ fn parses_forge_validate_issue_flags() {
         "forge".into(),
         "validate".into(),
         "--workflow".into(),
-        "examples/github-project-workflow.md".into(),
+        "config/WORKFLOW.md".into(),
         "--issue".into(),
         "#248".into(),
         "--status".into(),
@@ -214,10 +211,7 @@ fn parses_forge_validate_issue_flags() {
         panic!("expected forge validate command");
     };
 
-    assert_eq!(
-        workflow_path,
-        PathBuf::from("examples/github-project-workflow.md")
-    );
+    assert_eq!(workflow_path, PathBuf::from("config/WORKFLOW.md"));
     assert_eq!(status, Some(ForgeStatusArg::Todo));
     assert!(title.is_empty());
     assert!(markdown.is_empty());
@@ -234,7 +228,7 @@ fn parses_forge_validate_issue_with_candidate_body_flags() {
         "forge".into(),
         "validate".into(),
         "--workflow".into(),
-        "examples/github-project-workflow.md".into(),
+        "config/WORKFLOW.md".into(),
         "--issue".into(),
         "#293".into(),
         "--status".into(),

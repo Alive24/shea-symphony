@@ -21,9 +21,9 @@ Resolve these facts before any tracker write:
 - related Issues, snapshots, traces, PRs, and blockers;
 - whether the Shea Halo worker can read the Project and target checkout.
 
-Read the target's current configuration and the repository's
-`examples/halo-research-issue.md` when available. Treat configured workflow
-actions and Project status as authoritative. Do not guess a repository, Project,
+Read the target's current configuration and any repository-owned Halo research
+issue template named by that configuration. Treat configured workflow actions
+and Project status as authoritative. Do not guess a repository, Project,
 fixture, revision, or command.
 
 Explain the current control boundary when useful:

@@ -15,7 +15,7 @@ operator inspection, but not a substitute for tracker evidence.
 | Review job artifact | Durable until review evidence is in the workpad | `artifacts/<namespace>/<profile>/reviews/` |
 | PR body draft | Recoverable after PR creation | `artifacts/<namespace>/<profile>/drafts/pr-bodies/` |
 | Workpad draft | Recoverable after tracker workpad upsert | `artifacts/<namespace>/<profile>/drafts/workpads/` |
-| Reusable workflow/operator prompt | Durable repo material | `artifacts/<namespace>/<profile>/workflows/` until promoted to `docs/` or `examples/` |
+| Reusable workflow/operator prompt | Durable repo material | `artifacts/<namespace>/<profile>/workflows/` until promoted to `.shea/workflows/` or `docs/` |
 | Disposable scratch file | Disposable | `artifacts/<namespace>/<profile>/scratch/` |
 | Canonical checkout quarantine | Operator decision required | `artifacts/<namespace>/<profile>/scratch/canonical-checkout-quarantine/` |
 
@@ -54,7 +54,7 @@ worktree, artifact location, or `.gitignore` rule.
 
 ## Promotion Rules
 
-- Reusable workflow/operator instructions belong in `docs/` or `examples/`, not
+- Reusable workflow/operator instructions belong in `.shea/workflows/` or `docs/`, not
   only in temp files.
 - Tracker workpads remain the durable shared evidence surface for issue status,
   assumptions, decisions, verification, PR links, and review handoff.
@@ -84,8 +84,8 @@ true:
 The command never deletes files:
 
 ```bash
-cargo run -- clean plan workflows/shea-symphony.md
-cargo run -- clean plan workflows/shea-symphony.md
+cargo run -- clean plan .shea/workflows/shea-symphony.md
+cargo run -- clean plan .shea/workflows/shea-symphony.md
 ```
 
 `clean audit` is also read-only. It classifies configured local artifacts and
@@ -103,7 +103,7 @@ workspaces by persistence action:
   not be deleted automatically.
 
 ```bash
-cargo run -- clean audit workflows/shea-symphony.md
+cargo run -- clean audit .shea/workflows/shea-symphony.md
 ```
 
 Use the report to decide what to remove manually or in a future explicit

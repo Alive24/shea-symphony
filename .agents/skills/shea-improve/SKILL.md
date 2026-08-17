@@ -3,7 +3,7 @@ name: shea-improve
 description: Produce a bounded, evidence-backed visual report of architectural deepening opportunities in an operator-selected repository area, or recent-change hot spots when no area is supplied. Use only when an operator explicitly asks to improve architecture, find deeper modules, reduce cross-file change friction, or assess test seams; report without changing code, docs, tracker state, or issue inventory.
 ---
 
-# Shea Symphony Improve
+# Shea Improve
 
 Find at most three high-leverage architectural deepening candidates, recommend
 at most one, and stop. A defensible no-finding result is successful.

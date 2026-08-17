@@ -24,6 +24,9 @@ pub struct LinkedPullRequest {
     pub base_ref_name: Option<String>,
     #[serde(default)]
     pub head_ref_name: Option<String>,
+    /// Exact commit at the pull request head, when the tracker exposes it.
+    #[serde(default)]
+    pub head_sha: Option<String>,
     #[serde(default)]
     pub source: LinkedPullRequestSource,
 }

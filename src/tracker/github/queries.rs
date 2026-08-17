@@ -124,6 +124,7 @@ fn rich_issue_evidence_fields() -> String {
                   isDraft
                   baseRefName
                   headRefName
+                  headRefOid
                 }}
               }}
               comments(first: {GITHUB_PROJECT_COMMENT_PAGE_SIZE}) {{
@@ -237,6 +238,7 @@ query SheaSymphonyIssueProjectItem($owner: String!, $repo: String!, $number: Int
           isDraft
           baseRefName
           headRefName
+          headRefOid
         }}
       }}
       comments(first: {GITHUB_PROJECT_COMMENT_PAGE_SIZE}) {{

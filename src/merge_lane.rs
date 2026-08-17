@@ -1165,6 +1165,7 @@ mod tests {
             review_decision: Some("APPROVED".into()),
             base_ref_name: Some("main".into()),
             head_ref_name: None,
+            head_sha: None,
             source: crate::model::LinkedPullRequestSource::GithubNative,
         }
     }

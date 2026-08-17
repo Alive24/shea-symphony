@@ -71,14 +71,14 @@ for the underlying flags and session contract.
 cargo test agent::tests::claude_code_backend
 ```
 
-Protocol fixtures under `examples/fixtures/claude-stream-json-*.jsonl` cover
+Protocol fixtures under `tests/fixtures/backends/claude-main/*.jsonl` cover
 initialization, assistant and tool progress, usage, success, error,
 cancellation, malformed JSON, truncation, resume arguments, timeout cleanup,
-and process exit. `examples/claude-stream-json-workflow.md` shows a
+and process exit. `tests/fixtures/workflows/claude-main.md` shows a
 credential-free wrapper configuration.
 
-`examples/claude-review-workflow.md` and
-`examples/fixtures/claude-review-*.jsonl` exercise the independent Review
+`tests/fixtures/workflows/claude-review.md` and
+`tests/fixtures/backends/claude-review/*.jsonl` exercise the independent Review
 adapter with pass and confirmed-finding reports. Focused deterministic Review
 coverage is available with:
 

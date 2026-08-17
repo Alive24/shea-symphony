@@ -215,7 +215,7 @@ mod tests {
 
     #[test]
     fn parses_cockpit_tools_codex_instance_store() {
-        let path = Path::new("examples/fixtures/cockpit-tools-codex-instances.json");
+        let path = Path::new("tests/fixtures/profiles/cockpit-tools-codex-instances.json");
         let profiles = load_cockpit_codex_profiles(path).unwrap();
 
         assert_eq!(profiles.len(), 2);
@@ -231,7 +231,7 @@ mod tests {
     #[test]
     fn cockpit_profile_environment_sets_backend_context_without_account_ids_or_codex_home() {
         let profile = load_cockpit_codex_profiles(Path::new(
-            "examples/fixtures/cockpit-tools-codex-instances.json",
+            "tests/fixtures/profiles/cockpit-tools-codex-instances.json",
         ))
         .unwrap()
         .remove(0);
@@ -258,7 +258,7 @@ mod tests {
     #[test]
     fn codex_profile_environment_ignores_configured_codex_home() {
         let mut profile = load_cockpit_codex_profiles(Path::new(
-            "examples/fixtures/cockpit-tools-codex-instances.json",
+            "tests/fixtures/profiles/cockpit-tools-codex-instances.json",
         ))
         .unwrap()
         .remove(0);

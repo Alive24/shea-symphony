@@ -368,7 +368,7 @@ fn temporary_workflow_paths_emit_operator_warning() {
 
     assert!(warning.contains("workflow_warning=temporary_path"));
     assert!(warning.contains("action=promote"));
-    assert!(temporary_workflow_warning(Path::new("examples/github-project-workflow.md")).is_none());
+    assert!(temporary_workflow_warning(Path::new("config/WORKFLOW.md")).is_none());
 }
 
 #[test]

@@ -44,7 +44,7 @@ helpers.
 | `src/git_handoff.rs` PR read commands | `gh pr view` for handoff evidence | Allowed helper-level PR read | Keep behind CLI helper surface; avoid operator raw Project reads. |
 | `.codex/skills/` | Doctor/Main/Review/Merge manual workflows mention raw `gh` fallbacks | Allowed only as labeled CLI-gap diagnostics | Prefer grouped CLI commands and require workpad/report evidence for fallbacks. |
 | `docs/cli-command-reference.md`, `docs/operator-dogfood.md`, `docs/operator-doctor.md` | Operator guidance for CLI vs raw GitHub access | Policy documentation | Keep raw reads diagnostic and Project writes break-glass. |
-| `workflows/prompts/*.md` | Lane authority contracts | Workflow-critical | Route Project facts and mutations through Shea Symphony CLI. |
+| `.shea/prompts/*.md` | Lane authority contracts | Workflow-critical | Route Project facts and mutations through Shea Symphony CLI. |
 
 ## Missing Or Deferred CLI Surfaces
 

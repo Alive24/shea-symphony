@@ -152,9 +152,9 @@ fn clap_parser_preserves_default_plan_compatibility() {
         }
     );
     assert_eq!(
-        parse(&["examples/dry-run-workflow.md"]),
+        parse(&["fixtures/test-workflow.md"]),
         Command::Plan {
-            workflow_path: PathBuf::from("examples/dry-run-workflow.md"),
+            workflow_path: PathBuf::from("fixtures/test-workflow.md"),
             json: false,
         }
     );
@@ -162,18 +162,18 @@ fn clap_parser_preserves_default_plan_compatibility() {
 
 #[test]
 fn clap_parser_keeps_operator_command_aliases() {
-    assert!(Command::parse(vec!["status".into(), "examples/dry-run-workflow.md".into()]).is_err());
+    assert!(Command::parse(vec!["status".into(), "fixtures/test-workflow.md".into()]).is_err());
     assert_eq!(
-        parse(&["validate-workflow", "examples/dry-run-workflow.md"]),
+        parse(&["validate-workflow", "fixtures/test-workflow.md"]),
         Command::Validate {
-            workflow_path: PathBuf::from("examples/dry-run-workflow.md")
+            workflow_path: PathBuf::from("fixtures/test-workflow.md")
         }
     );
     assert_eq!(
-        parse(&["audit-project", "examples/dry-run-workflow.md"]),
+        parse(&["audit-project", "fixtures/test-workflow.md"]),
         Command::Doctor {
             options: DoctorOptions {
-                workflow_path: Some(PathBuf::from("examples/dry-run-workflow.md")),
+                workflow_path: Some(PathBuf::from("fixtures/test-workflow.md")),
                 json: false,
                 strict: false,
                 display: DisplayMode::Plain,
@@ -186,15 +186,15 @@ fn clap_parser_keeps_operator_command_aliases() {
         }
     );
     assert_eq!(
-        parse(&["profiles", "examples/dry-run-workflow.md"]),
+        parse(&["profiles", "fixtures/test-workflow.md"]),
         Command::Profiles {
-            workflow_path: PathBuf::from("examples/dry-run-workflow.md")
+            workflow_path: PathBuf::from("fixtures/test-workflow.md")
         }
     );
     assert_eq!(
-        parse(&["debug", "examples/dry-run-workflow.md"]),
+        parse(&["debug", "fixtures/test-workflow.md"]),
         Command::Debug {
-            workflow_path: PathBuf::from("examples/dry-run-workflow.md")
+            workflow_path: PathBuf::from("fixtures/test-workflow.md")
         }
     );
 }
@@ -205,13 +205,13 @@ fn parses_inspect_state_filters() {
         parse(&[
             "project",
             "inspect",
-            "examples/github-project-workflow.md",
+            "config/WORKFLOW.md",
             "#284",
             "--lane",
             "main"
         ]),
         Command::ProjectInspect {
-            workflow_path: PathBuf::from("examples/github-project-workflow.md"),
+            workflow_path: PathBuf::from("config/WORKFLOW.md"),
             issue_ref: "#284".into(),
             lane: Some(AgentSessionLaneArg::Main),
         }
@@ -221,10 +221,10 @@ fn parses_inspect_state_filters() {
 #[test]
 fn parses_project_state_read_surface() {
     assert_eq!(
-        parse(&["project", "state", "examples/github-project-workflow.md"]),
+        parse(&["project", "state", "config/WORKFLOW.md"]),
         Command::ProjectState {
             options: ProjectStateOptions {
-                workflow_path: PathBuf::from("examples/github-project-workflow.md"),
+                workflow_path: PathBuf::from("config/WORKFLOW.md"),
                 display: DisplayMode::Plain,
                 json: false,
                 include_terminal: false,
@@ -236,16 +236,10 @@ fn parses_project_state_read_surface() {
 #[test]
 fn parses_project_state_tui_display() {
     assert_eq!(
-        parse(&[
-            "project",
-            "state",
-            "examples/github-project-workflow.md",
-            "--display",
-            "tui"
-        ]),
+        parse(&["project", "state", "config/WORKFLOW.md", "--display", "tui"]),
         Command::ProjectState {
             options: ProjectStateOptions {
-                workflow_path: PathBuf::from("examples/github-project-workflow.md"),
+                workflow_path: PathBuf::from("config/WORKFLOW.md"),
                 display: DisplayMode::Tui,
                 json: false,
                 include_terminal: false,
@@ -257,15 +251,10 @@ fn parses_project_state_tui_display() {
 #[test]
 fn parses_project_state_json() {
     assert_eq!(
-        parse(&[
-            "project",
-            "state",
-            "examples/github-project-workflow.md",
-            "--json"
-        ]),
+        parse(&["project", "state", "config/WORKFLOW.md", "--json"]),
         Command::ProjectState {
             options: ProjectStateOptions {
-                workflow_path: PathBuf::from("examples/github-project-workflow.md"),
+                workflow_path: PathBuf::from("config/WORKFLOW.md"),
                 display: DisplayMode::Plain,
                 json: true,
                 include_terminal: false,
@@ -277,16 +266,10 @@ fn parses_project_state_json() {
 #[test]
 fn parses_project_state_all_scope() {
     assert_eq!(
-        parse(&[
-            "project",
-            "state",
-            "examples/github-project-workflow.md",
-            "--json",
-            "--all"
-        ]),
+        parse(&["project", "state", "config/WORKFLOW.md", "--json", "--all"]),
         Command::ProjectState {
             options: ProjectStateOptions {
-                workflow_path: PathBuf::from("examples/github-project-workflow.md"),
+                workflow_path: PathBuf::from("config/WORKFLOW.md"),
                 display: DisplayMode::Plain,
                 json: true,
                 include_terminal: true,
@@ -298,9 +281,9 @@ fn parses_project_state_all_scope() {
 #[test]
 fn parses_status_json_flag() {
     assert_eq!(
-        parse(&["status", "show", "examples/dry-run-workflow.md", "--json"]),
+        parse(&["status", "show", "fixtures/test-workflow.md", "--json"]),
         Command::Plan {
-            workflow_path: PathBuf::from("examples/dry-run-workflow.md"),
+            workflow_path: PathBuf::from("fixtures/test-workflow.md"),
             json: true,
         }
     );
@@ -311,22 +294,22 @@ fn parses_doctor_repair_human_review_command() {
     assert_eq!(
         parse(&[
             "doctor-repair-human-review",
-            "examples/github-project-workflow.md",
+            "config/WORKFLOW.md",
             "--dry-run"
         ]),
         Command::DoctorRepairHumanReview {
-            workflow_path: PathBuf::from("examples/github-project-workflow.md"),
+            workflow_path: PathBuf::from("config/WORKFLOW.md"),
             write: false
         }
     );
     assert_eq!(
         parse(&[
             "doctor-repair-human-review",
-            "examples/github-project-workflow.md",
+            "config/WORKFLOW.md",
             "--write"
         ]),
         Command::DoctorRepairHumanReview {
-            workflow_path: PathBuf::from("examples/github-project-workflow.md"),
+            workflow_path: PathBuf::from("config/WORKFLOW.md"),
             write: true
         }
     );
@@ -335,15 +318,10 @@ fn parses_doctor_repair_human_review_command() {
 #[test]
 fn parses_doctor_json_and_strict_flags() {
     assert_eq!(
-        parse(&[
-            "doctor",
-            "examples/github-project-workflow.md",
-            "--json",
-            "--strict"
-        ]),
+        parse(&["doctor", "config/WORKFLOW.md", "--json", "--strict"]),
         Command::Doctor {
             options: DoctorOptions {
-                workflow_path: Some(PathBuf::from("examples/github-project-workflow.md")),
+                workflow_path: Some(PathBuf::from("config/WORKFLOW.md")),
                 json: true,
                 strict: true,
                 display: DisplayMode::Plain,
@@ -421,13 +399,13 @@ fn parses_status_api_command() {
         parse(&[
             "status",
             "serve",
-            "examples/dry-run-workflow.md",
+            "fixtures/test-workflow.md",
             "--bind",
             "127.0.0.1:0",
             "--once"
         ]),
         Command::StatusApi {
-            workflow_path: PathBuf::from("examples/dry-run-workflow.md"),
+            workflow_path: PathBuf::from("fixtures/test-workflow.md"),
             bind: "127.0.0.1:0".parse().unwrap(),
             once: true,
         }
@@ -560,26 +538,26 @@ fn dogfood_smoke_is_not_a_cli_entrypoint() {
 
     let error = Command::parse(vec![
         "dogfood-smoke".into(),
-        "examples/github-project-workflow.md".into(),
+        "config/WORKFLOW.md".into(),
         "--dry-run".into(),
     ])
     .unwrap_err();
 
-    assert!(error.contains("unexpected argument 'examples/github-project-workflow.md'"));
+    assert!(error.contains("unexpected argument 'config/WORKFLOW.md'"));
 }
 
 #[test]
 fn parses_cleanup_plan_command() {
     assert_eq!(
-        parse(&["clean", "plan", "examples/github-project-workflow.md"]),
+        parse(&["clean", "plan", "config/WORKFLOW.md"]),
         Command::CleanPlan {
-            workflow_path: PathBuf::from("examples/github-project-workflow.md")
+            workflow_path: PathBuf::from("config/WORKFLOW.md")
         }
     );
     assert_eq!(
-        parse(&["clean", "audit", "examples/github-project-workflow.md"]),
+        parse(&["clean", "audit", "config/WORKFLOW.md"]),
         Command::CleanAudit {
-            workflow_path: PathBuf::from("examples/github-project-workflow.md")
+            workflow_path: PathBuf::from("config/WORKFLOW.md")
         }
     );
 }
@@ -588,13 +566,13 @@ fn parses_cleanup_plan_command() {
 fn parses_cleanup_workspaces_command() {
     assert!(Command::parse(vec![
         "cleanup-workspaces".into(),
-        "examples/github-project-workflow.md".into(),
+        "config/WORKFLOW.md".into(),
         "--write".into()
     ])
     .is_err());
     assert!(Command::parse(vec![
         "workspace-cleanup".into(),
-        "examples/github-project-workflow.md".into()
+        "config/WORKFLOW.md".into()
     ])
     .is_err());
 }
@@ -713,13 +691,13 @@ fn clap_parser_preserves_write_intent_for_mutating_commands() {
         parse(&[
             "project",
             "set-state",
-            "examples/github-project-workflow.md",
+            "config/WORKFLOW.md",
             "#4",
             "agent_review",
             "--write"
         ]),
         Command::SetState {
-            workflow_path: PathBuf::from("examples/github-project-workflow.md"),
+            workflow_path: PathBuf::from("config/WORKFLOW.md"),
             issue_ref: "#4".into(),
             state: "agent_review".into(),
             write: true
@@ -733,14 +711,14 @@ fn clap_parser_preserves_review_outcome_mapping() {
         parse(&[
             "review",
             "fake",
-            "examples/github-project-workflow.md",
+            "config/WORKFLOW.md",
             "#4",
             "--outcome",
             "confirmed",
             "--write"
         ]),
         Command::ReviewFake {
-            workflow_path: PathBuf::from("examples/github-project-workflow.md"),
+            workflow_path: PathBuf::from("config/WORKFLOW.md"),
             issue_ref: "#4".into(),
             outcome: FakeReviewOutcome::ConfirmedFinding,
             write: true
@@ -751,15 +729,9 @@ fn clap_parser_preserves_review_outcome_mapping() {
 #[test]
 fn parses_project_issue_read_surface() {
     assert_eq!(
-        parse(&[
-            "project",
-            "issue",
-            "examples/github-project-workflow.md",
-            "#235",
-            "--json"
-        ]),
+        parse(&["project", "issue", "config/WORKFLOW.md", "#235", "--json"]),
         Command::ProjectIssue {
-            workflow_path: PathBuf::from("examples/github-project-workflow.md"),
+            workflow_path: PathBuf::from("config/WORKFLOW.md"),
             issue_ref: "#235".into(),
             json: true
         }
@@ -772,13 +744,13 @@ fn parses_project_timeline_comment_write_surface() {
         parse(&[
             "project",
             "timeline-comment",
-            "examples/github-project-workflow.md",
+            "config/WORKFLOW.md",
             "#235",
             "/tmp/human-review-note.md",
             "--write"
         ]),
         Command::TimelineComment {
-            workflow_path: PathBuf::from("examples/github-project-workflow.md"),
+            workflow_path: PathBuf::from("config/WORKFLOW.md"),
             issue_ref: "#235".into(),
             markdown_path: PathBuf::from("/tmp/human-review-note.md"),
             write: true,
@@ -792,14 +764,14 @@ fn parses_manual_review_authority_commands() {
         parse(&[
             "review",
             "claim",
-            "examples/github-project-workflow.md",
+            "config/WORKFLOW.md",
             "#235",
             "--worker",
             "Gemini A",
             "--write"
         ]),
         Command::LaneClaim {
-            workflow_path: PathBuf::from("examples/github-project-workflow.md"),
+            workflow_path: PathBuf::from("config/WORKFLOW.md"),
             issue_ref: "#235".into(),
             lane: AgentSessionLaneArg::Review,
             worker: "Gemini A".into(),
@@ -810,7 +782,7 @@ fn parses_manual_review_authority_commands() {
 
     assert!(Command::parse(vec![
         "review-clear-claim".into(),
-        "examples/github-project-workflow.md".into(),
+        "config/WORKFLOW.md".into(),
         "#235".into(),
         "--write".into()
     ])
@@ -833,7 +805,7 @@ fn parses_grouped_review_commands() {
     let command = Command::parse(vec![
         "review".into(),
         "loop".into(),
-        "examples/review-fixture-workflow.md".into(),
+        "fixtures/review-workflow.md".into(),
         "--once".into(),
         "--fake-outcome".into(),
         "confirmed".into(),
@@ -845,7 +817,7 @@ fn parses_grouped_review_commands() {
     };
     assert_eq!(
         options.workflow_path,
-        PathBuf::from("examples/review-fixture-workflow.md")
+        PathBuf::from("fixtures/review-workflow.md")
     );
     assert!(options.once);
     assert_eq!(
@@ -859,7 +831,7 @@ fn parses_grouped_review_clear_claim_command() {
     let command = Command::parse(vec![
         "review".into(),
         "clear-claim".into(),
-        "examples/github-project-workflow.md".into(),
+        "config/WORKFLOW.md".into(),
         "#235".into(),
         "--write".into(),
     ])
@@ -868,7 +840,7 @@ fn parses_grouped_review_clear_claim_command() {
     assert_eq!(
         command,
         Command::ReviewClearClaim {
-            workflow_path: PathBuf::from("examples/github-project-workflow.md"),
+            workflow_path: PathBuf::from("config/WORKFLOW.md"),
             issue_ref: "#235".into(),
             write: true,
         }

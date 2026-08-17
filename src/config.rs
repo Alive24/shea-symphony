@@ -1727,7 +1727,7 @@ mod tests {
     fn parses_llm_quality_gate_config() {
         let workflow = WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
-            "---\ntracker:\n  kind: memory\nquality_gate:\n  llm:\n    mode: required\n    command: sh examples/fixtures/llm-gate-ready.sh\n    timeout_ms: 5000\n---\nPrompt",
+            "---\ntracker:\n  kind: memory\nquality_gate:\n  llm:\n    mode: required\n    command: sh tests/fixtures/quality-gate/ready.sh\n    timeout_ms: 5000\n---\nPrompt",
         )
         .unwrap();
         let config =
@@ -1736,7 +1736,7 @@ mod tests {
         assert_eq!(config.quality_gate.llm.mode, "required");
         assert_eq!(
             config.quality_gate.llm.command.as_deref(),
-            Some("sh examples/fixtures/llm-gate-ready.sh")
+            Some("sh tests/fixtures/quality-gate/ready.sh")
         );
         assert_eq!(config.quality_gate.llm.timeout_ms, 5_000);
         assert!(config.validate().is_ok());

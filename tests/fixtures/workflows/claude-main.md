@@ -5,7 +5,7 @@ tracker:
   repo: shea-symphony
   project_owner: Alive24
   project_number: 9
-  fixture_path: fixtures/dry-run-issues.json
+  fixture_path: ../tracker/dry-run.json
   status_field: Status
   state_map:
     todo: Todo
@@ -28,10 +28,10 @@ merge_lane:
   max_concurrent_workers: 1
 claude:
   # Shea appends -p, stream-json input/output, --verbose, and --resume when needed.
-  command: sh examples/fixtures/claude-stream-json-wrapper.sh
+  command: sh tests/fixtures/backends/claude-main/wrapper.sh
   turn_timeout_ms: 1000
 observability:
-  logs_root: log
+  logs_root: /tmp/shea-symphony-claude-stream-json-logs
 ---
 
 You are running a deterministic Claude Code stream-json fixture for {{ issue.identifier }}.

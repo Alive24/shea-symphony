@@ -3684,13 +3684,13 @@ esac
 
     fn claude_fixture(name: &str) -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("examples/fixtures")
+            .join("tests/fixtures/backends/claude-main")
             .join(name)
     }
 
     fn codex_config_with_profile(command: &str) -> RuntimeConfig {
         let fixture_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("examples/fixtures/cockpit-tools-codex-instances.json");
+            .join("tests/fixtures/profiles/cockpit-tools-codex-instances.json");
         let workflow = WorkflowDefinition::parse(
             "/tmp/WORKFLOW.md",
             &format!(
@@ -4261,9 +4261,7 @@ done
             .insert("FAKE_CLAUDE_TRACE".into(), trace.display().to_string());
         prepared.env.insert(
             "FAKE_CLAUDE_FIXTURE".into(),
-            claude_fixture("claude-stream-json-success.jsonl")
-                .display()
-                .to_string(),
+            claude_fixture("success.jsonl").display().to_string(),
         );
         let events = backend.run(prepared).unwrap();
         let summary = backend.summarize(&events);
@@ -4360,9 +4358,7 @@ done
             .insert("FAKE_CLAUDE_TRACE".into(), trace.display().to_string());
         prepared.env.insert(
             "FAKE_CLAUDE_FIXTURE".into(),
-            claude_fixture("claude-stream-json-success.jsonl")
-                .display()
-                .to_string(),
+            claude_fixture("success.jsonl").display().to_string(),
         );
         let events = backend.run(prepared).unwrap();
         let summary = backend.summarize(&events);
@@ -4377,21 +4373,13 @@ done
     #[test]
     fn claude_code_backend_fails_closed_for_protocol_and_process_failures() {
         for (mode, fixture, expected) in [
-            (
-                "fixture",
-                "claude-stream-json-error.jsonl",
-                "permission was denied",
-            ),
-            ("fixture", "claude-stream-json-cancelled.jsonl", "cancelled"),
-            ("fixture", "claude-stream-json-malformed.jsonl", "malformed"),
-            (
-                "fixture",
-                "claude-stream-json-truncated.jsonl",
-                "before a terminal result",
-            ),
+            ("fixture", "error.jsonl", "permission was denied"),
+            ("fixture", "cancelled.jsonl", "cancelled"),
+            ("fixture", "malformed.jsonl", "malformed"),
+            ("fixture", "truncated.jsonl", "before a terminal result"),
             (
                 "startup_failure",
-                "claude-stream-json-success.jsonl",
+                "success.jsonl",
                 "startup failed with status 23",
             ),
         ] {

@@ -1,7 +1,7 @@
 ---
 tracker:
   kind: memory
-  fixture_path: fixtures/review-issues.json
+  fixture_path: ../tracker/review.json
   status_field: Status
   state_map:
     backlog: Backlog
@@ -25,7 +25,7 @@ review_lane:
   backend: claude-code
   # The lane-specific command owns model, authentication, gateway, environment,
   # and read-only permission arguments. Omit it to use claude.command above.
-  claude_command: sh examples/fixtures/claude-review-wrapper.sh
+  claude_command: sh tests/fixtures/backends/claude-review/wrapper.sh
   timeout_ms: 1000
   max_concurrent_workers: 2
 observability:

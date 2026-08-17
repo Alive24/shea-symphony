@@ -5,7 +5,7 @@ fn parses_review_loop_flags() {
     let command = Command::parse(vec![
         "review".into(),
         "loop".into(),
-        "examples/review-fixture-workflow.md".into(),
+        "fixtures/review-workflow.md".into(),
         "--max-iterations".into(),
         "2".into(),
         "--fake-outcome".into(),
@@ -22,7 +22,7 @@ fn parses_review_loop_flags() {
 
     assert_eq!(
         options.workflow_path,
-        PathBuf::from("examples/review-fixture-workflow.md")
+        PathBuf::from("fixtures/review-workflow.md")
     );
     assert_eq!(options.max_iterations, Some(2));
     assert_eq!(
@@ -57,7 +57,7 @@ fn parses_review_status_flags() {
     let command = Command::parse(vec![
         "review".into(),
         "status".into(),
-        "examples/review-fixture-workflow.md".into(),
+        "fixtures/review-workflow.md".into(),
         "--issue".into(),
         "#313".into(),
         "--recent".into(),
@@ -73,7 +73,7 @@ fn parses_review_status_flags() {
 
     assert_eq!(
         options.workflow_path,
-        PathBuf::from("examples/review-fixture-workflow.md")
+        PathBuf::from("fixtures/review-workflow.md")
     );
     assert_eq!(options.issue_filter.as_deref(), Some("#313"));
     assert_eq!(options.recent_limit, 3);
@@ -86,7 +86,7 @@ fn parses_merge_loop_flags() {
     let command = Command::parse(vec![
         "merge".into(),
         "loop".into(),
-        "examples/github-project-workflow.md".into(),
+        "config/WORKFLOW.md".into(),
         "--max-iterations".into(),
         "3".into(),
         "--max-concurrent".into(),
@@ -99,10 +99,7 @@ fn parses_merge_loop_flags() {
         panic!("expected merge loop command");
     };
 
-    assert_eq!(
-        options.workflow_path,
-        PathBuf::from("examples/github-project-workflow.md")
-    );
+    assert_eq!(options.workflow_path, PathBuf::from("config/WORKFLOW.md"));
     assert_eq!(options.max_iterations, Some(3));
     assert_eq!(options.max_concurrent, Some(2));
     assert_eq!(options.worker_limit(&test_config()), 2);
@@ -193,7 +190,7 @@ fn parses_run_loop_flags() {
     let command = Command::parse(vec![
         "main".into(),
         "loop".into(),
-        "examples/dry-run-workflow.md".into(),
+        "fixtures/test-workflow.md".into(),
         "--max-iterations".into(),
         "3".into(),
         "--max-concurrent".into(),
@@ -210,7 +207,7 @@ fn parses_run_loop_flags() {
 
     assert_eq!(
         options.workflow_path,
-        PathBuf::from("examples/dry-run-workflow.md")
+        PathBuf::from("fixtures/test-workflow.md")
     );
     assert_eq!(options.max_iterations, Some(3));
     assert_eq!(options.max_concurrent, Some(4));
@@ -285,7 +282,7 @@ fn parses_merge_once_command() {
     let command = Command::parse(vec![
         "merge".into(),
         "once".into(),
-        "examples/github-project-workflow.md".into(),
+        "config/WORKFLOW.md".into(),
         "--dry-run".into(),
     ])
     .unwrap();
@@ -293,14 +290,14 @@ fn parses_merge_once_command() {
     assert_eq!(
         command,
         Command::MergeOnce {
-            workflow_path: PathBuf::from("examples/github-project-workflow.md"),
+            workflow_path: PathBuf::from("config/WORKFLOW.md"),
             write: false
         }
     );
 
     assert!(Command::parse(vec![
         "land".into(),
-        "examples/github-project-workflow.md".into(),
+        "config/WORKFLOW.md".into(),
         "--write".into()
     ])
     .is_err());

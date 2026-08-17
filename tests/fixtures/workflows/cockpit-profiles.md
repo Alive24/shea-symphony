@@ -1,7 +1,7 @@
 ---
 tracker:
   kind: memory
-  fixture_path: fixtures/dry-run-issues.json
+  fixture_path: ../tracker/dry-run.json
 workspace:
   root: /tmp/shea-symphony-profile-workspaces
 main_lane:
@@ -9,7 +9,7 @@ main_lane:
 profiles:
   default: codex-alpha
   cockpit_tools:
-    codex_instances_path: fixtures/cockpit-tools-codex-instances.json
+    codex_instances_path: ../profiles/cockpit-tools-codex-instances.json
   entries:
     - id: fallback-local
       instance_name: Fallback Local

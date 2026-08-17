@@ -1,12 +1,12 @@
 ---
 tracker:
-  kind: memory
+  kind: github_project_v2
   owner: Alive24
   repo: shea-symphony
   project_owner: Alive24
-  project_number: 9
+  project_number: 1
   status_field: Status
-  fixture_path: fixtures/merge-conflict-repair-issues.json
+  fixture_path: ../tracker/dry-run.json
   state_map:
     backlog: Backlog
     todo: Todo
@@ -34,12 +34,18 @@ tracker:
   workpad:
     source: issue_comment
     marker: "<!-- shea-symphony-workpad -->"
+polling:
+  interval_ms: 5000
 workspace:
-  root: /tmp/shea-symphony-merge-conflict-fixture-workspaces
+  root: /tmp/shea-symphony-dry-run-workspaces
 main_lane:
   backend: dry-run
-  max_concurrent_agents: 1
-  max_turns: 1
+  max_concurrent_agents: 2
+  max_turns: 3
+  max_retry_backoff_ms: 300000
+  max_concurrent_agents_by_state:
+    Todo: 2
+    Rework: 1
 codex:
   command: codex app-server -c 'service_tier="fast"'
 claude:
@@ -47,12 +53,21 @@ claude:
 review_lane:
   backend: fake
   gemini_command: gemini
+  timeout_ms: 600000
 observability:
-  logs_root: /tmp/shea-symphony-merge-conflict-fixture-logs
+  dashboard_enabled: true
+  refresh_ms: 1000
+  render_interval_ms: 16
 ---
 
-Fixture workflow for controlled `DIRTY` PR merge-lane repair rehearsal.
+You are working on Shea Symphony issue {{ issue.identifier }}.
 
-This workflow never changes a live branch. In write mode, the merge lane records
-synthetic safe-conflict-repair evidence and keeps the issue in `Merging` so the
-next loop can re-evaluate mergeability, matching the live retry contract.
+Title: {{ issue.title }}
+State: {{ issue.state }}
+
+{% if attempt %}
+This is retry attempt {{ attempt }}. Resume from current workspace state.
+{% endif %}
+
+Use the issue contract, preserve tracker/backend abstractions, and keep live
+GitHub Project v2 and live agent execution disabled in this dry-run workflow.

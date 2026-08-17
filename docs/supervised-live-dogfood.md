@@ -32,22 +32,22 @@ or verification is failing for an unexplained reason.
 
 The repo-owned live workflow is:
 
-- `workflows/shea-symphony.md` for implementation, review, merge, smoke,
+- `.shea/workflows/shea-symphony.md` for implementation, review, merge, smoke,
   inspect, project state, and Issue Forge commands.
 
 It defaults durable artifacts to `~/.shea-symphony/artifacts` when
 `SHEA_SYMPHONY_ARTIFACT_ROOT` is unset. Set that variable to migrate worktrees,
 logs, runtime state, review prompts, and review ledgers to another local root.
 If a command points at `/tmp/*.md` or `/private/tmp/*.md`, promote the reusable
-workflow or prompt into `workflows/`, `examples/`, or `docs/` before treating it
-as canonical. Normal dogfood workflow config belongs in `workflows/`.
+workflow or prompt into `.shea/workflows/` or `docs/` before treating it as
+canonical. Normal dogfood workflow config belongs in `.shea/workflows/`.
 
 ## Inspect The Project
 
 Use the live workflow as the source of tracker state:
 
 ```bash
-cargo run -- project inspect workflows/shea-symphony.md '#<issue>'
+cargo run -- project inspect .shea/workflows/shea-symphony.md '#<issue>'
 cargo run -- doctor
 cargo run -- doctor --interactive
 ```
@@ -69,10 +69,10 @@ Before the first write tick, run the same preflight surfaces operators use for
 normal work:
 
 ```bash
-cargo run -- project state workflows/shea-symphony.md
-cargo run -- autopilot plan workflows/shea-symphony.md
-cargo run -- doctor workflows/shea-symphony.md
-cargo run -- autopilot loop workflows/shea-symphony.md --max-iterations 1 --dry-run
+cargo run -- project state .shea/workflows/shea-symphony.md
+cargo run -- autopilot plan .shea/workflows/shea-symphony.md
+cargo run -- doctor .shea/workflows/shea-symphony.md
+cargo run -- autopilot loop .shea/workflows/shea-symphony.md --max-iterations 1 --dry-run
 ```
 
 Proceed only when tracker access is trusted, `autopilot plan` reports readiness
@@ -84,13 +84,13 @@ or a clear idle state, and the dry-run shows no blocking integration gaps. Use
 Preview the same bounded all-lane foreground tick without tracker mutation:
 
 ```bash
-cargo run -- autopilot loop workflows/shea-symphony.md --max-iterations 1 --dry-run
+cargo run -- autopilot loop .shea/workflows/shea-symphony.md --max-iterations 1 --dry-run
 ```
 
 Use one bounded write tick:
 
 ```bash
-cargo run -- autopilot loop workflows/shea-symphony.md --max-iterations 1 --write
+cargo run -- autopilot loop .shea/workflows/shea-symphony.md --max-iterations 1 --write
 ```
 
 Autoloop (`autopilot loop`) is a bounded foreground CLI supervisor, not a daemon,
@@ -115,10 +115,10 @@ Shea Symphony sends two `C-m` submissions and waits until the pane reaches a
 ready Codex viewport. Set `SHEA_SYMPHONY_TMUX_AUTO_TRUST=0` to disable this
 auto-trust behavior. If the prompt cannot be cleared, the write tick stops with
 the tmux attach command and log path preserved for manual inspection.
-Use `cargo run -- status workflows/shea-symphony.md` for compact session
+Use `cargo run -- status .shea/workflows/shea-symphony.md` for compact session
 classification and attach/log evidence, `cargo run -- doctor
-workflows/shea-symphony.md` for stale or mismatched runtime/session findings,
-and `cargo run -- clean audit workflows/shea-symphony.md` to classify session
+.shea/workflows/shea-symphony.md` for stale or mismatched runtime/session findings,
+and `cargo run -- clean audit .shea/workflows/shea-symphony.md` to classify session
 artifacts before cleanup.
 
 The operator launcher wraps the same workflow with local preflight checks:
@@ -151,22 +151,22 @@ another write tick.
 Before manual Review or Merge recovery, check the issue workspace first:
 
 ```bash
-cargo run -- workspace show workflows/shea-symphony.md '#253'
+cargo run -- workspace show .shea/workflows/shea-symphony.md '#253'
 ```
 
 If multiple strong candidates appear, choose the correct Main PR worktree and
 record it explicitly:
 
 ```bash
-cargo run -- workspace adopt workflows/shea-symphony.md '#253' /path/to/worktree --write
+cargo run -- workspace adopt .shea/workflows/shea-symphony.md '#253' /path/to/worktree --write
 ```
 
 If no suitable candidate exists, prepare the Review/Merge inspection workspace
 through Shea Symphony instead of checking out the PR in the canonical checkout:
 
 ```bash
-cargo run -- workspace ensure workflows/shea-symphony.md '#253' --dry-run
-cargo run -- workspace ensure workflows/shea-symphony.md '#253' --pr 254 --write
+cargo run -- workspace ensure .shea/workflows/shea-symphony.md '#253' --dry-run
+cargo run -- workspace ensure .shea/workflows/shea-symphony.md '#253' --pr 254 --write
 ```
 
 `workspace ensure --write` requires the canonical checkout to be clean latest
@@ -180,16 +180,16 @@ For a bounded Review Agent pass, run:
 
 ```bash
 export SHEA_AGY_COMMAND="$(command -v agy)"
-cargo run -- review loop workflows/shea-symphony.md --max-iterations 1 --write
+cargo run -- review loop .shea/workflows/shea-symphony.md --max-iterations 1 --write
 ```
 
 For a manual/operator-supplied review, use the same CLI authority boundary
 instead of editing the Project board directly:
 
 ```bash
-cargo run -- review claim workflows/shea-symphony.md '#226' --worker "Manual agy Review" --write
-cargo run -- review pass workflows/shea-symphony.md '#226' --evidence-file /tmp/review-evidence.md --write
-cargo run -- review reject workflows/shea-symphony.md '#226' --evidence-file /tmp/review-evidence.md --target-state rework --write
+cargo run -- review claim .shea/workflows/shea-symphony.md '#226' --worker "Manual agy Review" --write
+cargo run -- review pass .shea/workflows/shea-symphony.md '#226' --evidence-file /tmp/review-evidence.md --write
+cargo run -- review reject .shea/workflows/shea-symphony.md '#226' --evidence-file /tmp/review-evidence.md --target-state rework --write
 ```
 
 Expected outcomes:
@@ -251,15 +251,15 @@ actor, input state, target state, PR when relevant, result, and a short evidence
 summary. For operator-authored Human Review notes, write the comment through:
 
 ```bash
-cargo run -- project timeline-comment workflows/shea-symphony.md '#<issue>' /path/to/human-review-note.md --write
+cargo run -- project timeline-comment .shea/workflows/shea-symphony.md '#<issue>' /path/to/human-review-note.md --write
 ```
 
 After a human accepts work and moves the issue to `Merging`, use the guarded
 merge lane:
 
 ```bash
-cargo run -- merge once workflows/shea-symphony.md --dry-run
-cargo run -- merge once workflows/shea-symphony.md --write
+cargo run -- merge once .shea/workflows/shea-symphony.md --dry-run
+cargo run -- merge once .shea/workflows/shea-symphony.md --write
 ```
 
 The merge lane should:
@@ -291,15 +291,15 @@ cargo clippy --all-targets --all-features -- -D warnings
 Then refresh the tracker and project invariants:
 
 ```bash
-cargo run -- project inspect workflows/shea-symphony.md '#<issue>'
-cargo run -- doctor workflows/shea-symphony.md
+cargo run -- project inspect .shea/workflows/shea-symphony.md '#<issue>'
+cargo run -- doctor .shea/workflows/shea-symphony.md
 ```
 
 ## Recovery
 
 When something goes wrong:
 
-- use `cargo run -- project inspect workflows/shea-symphony.md '#<issue>'` to refresh
+- use `cargo run -- project inspect .shea/workflows/shea-symphony.md '#<issue>'` to refresh
   tracker state;
 - use `cargo run -- doctor` to find project, claim, and runtime-state
   invariant violations;

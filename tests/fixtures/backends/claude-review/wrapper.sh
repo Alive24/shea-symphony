@@ -5,8 +5,8 @@ set -eu
 IFS= read -r _input
 
 case "${SHEA_CLAUDE_REVIEW_FIXTURE:-pass}" in
-  finding) fixture=claude-review-finding.jsonl ;;
-  *) fixture=claude-review-pass.jsonl ;;
+  finding) fixture=finding.jsonl ;;
+  *) fixture=pass.jsonl ;;
 esac
 
 session_id="claude-review-$$"

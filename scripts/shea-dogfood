@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-WORKFLOW="workflows/shea-symphony.md"
+WORKFLOW=".shea/workflows/shea-symphony.md"
 MAX_ITERATIONS="1"
 MODE="dry-run"
 CONFIRM_WRITE="false"
@@ -16,7 +16,7 @@ Options:
   --dry-run            Preview the bounded all-lane Autoloop tick without tracker mutation.
   --write              Run one bounded foreground Autoloop after preflight.
   --confirm-write      Required with --write.
-  --workflow PATH      Workflow markdown path. Default: workflows/shea-symphony.md
+  --workflow PATH      Workflow markdown path. Default: .shea/workflows/shea-symphony.md
   --max-iterations N   Bounded Autoloop iterations. Default: 1
   --help               Show this help.
 EOF

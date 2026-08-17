@@ -147,29 +147,29 @@ Return one outcome: `repaired`, `no_change`, `refused_unsafe`,
 For all Doctor sessions:
 
 ```bash
-cargo run -- project state workflows/shea-symphony.md
-cargo run -- doctor workflows/shea-symphony.md
-cargo run -- debug workflows/shea-symphony.md
+cargo run -- project state .shea/workflows/shea-symphony.md
+cargo run -- doctor .shea/workflows/shea-symphony.md
+cargo run -- debug .shea/workflows/shea-symphony.md
 ```
 
 For a selected issue:
 
 ```bash
-cargo run -- project issue workflows/shea-symphony.md '#258' --json
-cargo run -- doctor workflows/shea-symphony.md repair '#258'
+cargo run -- project issue .shea/workflows/shea-symphony.md '#258' --json
+cargo run -- doctor .shea/workflows/shea-symphony.md repair '#258'
 ```
 
 For an issue that might still be dispatchable:
 
 ```bash
-cargo run -- project inspect workflows/shea-symphony.md '#258'
+cargo run -- project inspect .shea/workflows/shea-symphony.md '#258'
 ```
 
 For worktree or session ambiguity:
 
 ```bash
-cargo run -- workspace show workflows/shea-symphony.md '#258'
-cargo run -- session list workflows/shea-symphony.md
+cargo run -- workspace show .shea/workflows/shea-symphony.md '#258'
+cargo run -- session list .shea/workflows/shea-symphony.md
 git worktree list --porcelain
 ```
 
@@ -228,9 +228,9 @@ operator-authored notes with `project timeline-comment`; do not use
 - Secondary classifications: `stale_lane_claim`
 - Diagnosis: The issue is blocked because ...
 - Evidence read:
-  - `cargo run -- project state workflows/shea-symphony.md`: `trusted=true`
-  - `cargo run -- project issue workflows/shea-symphony.md '#258' --json`: ...
-  - `cargo run -- doctor workflows/shea-symphony.md repair '#258'`: ...
+  - `cargo run -- project state .shea/workflows/shea-symphony.md`: `trusted=true`
+  - `cargo run -- project issue .shea/workflows/shea-symphony.md '#258' --json`: ...
+  - `cargo run -- doctor .shea/workflows/shea-symphony.md repair '#258'`: ...
 - Recommended next step: ...
 - Explicit repair recommendation: ...
 - Can execute in this session: `yes` | `no`

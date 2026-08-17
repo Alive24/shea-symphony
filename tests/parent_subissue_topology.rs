@@ -6,7 +6,7 @@ use shea_symphony::handoff::{
 use shea_symphony::model::TrackerIssue;
 
 fn fixture() -> Value {
-    let raw = include_str!("../examples/fixtures/parent-subissue-topology.json");
+    let raw = include_str!("fixtures/topology/parent-subissue.json");
     serde_json::from_str(raw).expect("parent/subissue topology fixture should be valid JSON")
 }
 

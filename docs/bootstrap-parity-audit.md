@@ -40,11 +40,11 @@ must not be edited by Shea Symphony implementation work.
 
 | Category | Status | Evidence | Remaining gap |
 | --- | --- | --- | --- |
-| Workflow loading | Partial | `src/workflow.rs`, `README.md`, `docs/dogfood-readiness.md`, `workflows/shea-symphony.md` | A first-slice reload store exists; long-running runtime reload wiring remains deferred. |
-| Typed config | Partial | `src/config.rs`, `examples/*.md` | Config is enough for current CLI paths, but richer live worker settings are still evolving. |
+| Workflow loading | Partial | `src/workflow.rs`, `README.md`, `docs/dogfood-readiness.md`, `.shea/workflows/shea-symphony.md` | A first-slice reload store exists; long-running runtime reload wiring remains deferred. |
+| Typed config | Partial | `src/config.rs`, `.shea/workflows/`, `tests/fixtures/workflows/` | Config is enough for current CLI paths, but richer live worker settings are still evolving. |
 | Normalized tracker model | Landed | `src/model.rs`, `src/tracker.rs` | Blocker relationship sources need continued adapter hardening. |
-| GitHub Project v2 adapter | Partial | `src/tracker.rs`, `workflows/shea-symphony.md`, `project state` command | Live reads/writes exist behind `gh` and explicit `--write`; full reconciliation and richer Project field mutation are not complete. |
-| Linear adapter | Partial | `src/tracker.rs`, `examples/linear-fixture-workflow.md` | Live schema smoke coverage is still required before routine use. |
+| GitHub Project v2 adapter | Partial | `src/tracker.rs`, `.shea/workflows/shea-symphony.md`, `project state` command | Live reads/writes exist behind `gh` and explicit `--write`; full reconciliation and richer Project field mutation are not complete. |
+| Linear adapter | Partial | `src/tracker.rs`, `src/tracker/tests.rs` | Live schema smoke coverage is still required before routine use. |
 | Issue Quality Gate | Landed | `src/quality_gate.rs`, `docs/bootstrap/ISSUE_QUALITY_GATE_TEMPLATE.md` | Semantic/LLM-assisted checks remain optional and conservative. |
 | Issue Forge | Partial | `src/issue_forge.rs`, README command docs | Tracker creation exists; richer field setup and conversational UI remain follow-ups. |
 | Workspace lifecycle | Partial | `src/workspace.rs`, `src/handoff.rs`, `src/git_handoff.rs`, `clean plan` command | Terminal cleanup planning exists; automatic runtime cleanup and remote/SSH parity are not complete. |
@@ -115,9 +115,9 @@ set `Human Review`, and only after review evidence is recorded.
 Keep this document aligned by running:
 
 ```bash
-cargo run -- project inspect workflows/shea-symphony.md '#<issue>'
-cargo run -- project state workflows/shea-symphony.md
-cargo run -- doctor workflows/shea-symphony.md
+cargo run -- project inspect .shea/workflows/shea-symphony.md '#<issue>'
+cargo run -- project state .shea/workflows/shea-symphony.md
+cargo run -- doctor .shea/workflows/shea-symphony.md
 cargo test
 cargo fmt --check
 cargo clippy --all-targets --all-features -- -D warnings

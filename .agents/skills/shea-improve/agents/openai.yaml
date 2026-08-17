@@ -1,6 +1,0 @@
-interface:
-  display_name: "Shea Symphony Improve"
-  short_description: "Find bounded architecture deepening opportunities"
-  default_prompt: "Use $shea-improve on an operator-selected area to produce a bounded local architecture report without changing the repository."
-policy:
-  allow_implicit_invocation: false

@@ -1,12 +1,22 @@
 ---
-name: shea-improve
-description: Produce a bounded, evidence-backed visual report of architectural deepening opportunities in an operator-selected repository area, or recent-change hot spots when no area is supplied. Use only when an operator explicitly asks to improve architecture, find deeper modules, reduce cross-file change friction, or assess test seams; report without changing code, docs, tracker state, or issue inventory.
+name: shea-deepen
+description: Produce a bounded, report-only, evidence-backed visual assessment of architectural deepening opportunities in an operator-selected code, runtime, workflow-contract, or test area, or recent-change hot spots when no area is supplied. Use when the primary request is to reduce cross-file change friction, deepen modules, localize behavior, or assess test seams. Do not use for documentation correctness, freshness, reconciliation, or OpenWiki work; concrete failure, stuck-execution, or faulty-configuration diagnosis or repair; or implementation.
 ---
 
-# Shea Improve
+# Shea Deepen
 
 Find at most three high-leverage architectural deepening candidates, recommend
 at most one, and stop. A defensible no-finding result is successful.
+
+## Route by primary object
+
+Before scanning, classify the request by its primary object, not its file type.
+Continue for architecture and change-locality assessment, including structural
+questions about behavior-bearing Markdown. Route a concrete failure or repair
+to `$shea-doctor`. For documentation correctness, freshness, reconciliation,
+or OpenWiki work, route to `$shea-docs` when installed; otherwise stop without
+using Deepen or Doctor as a fallback. Documentation may still serve as evidence
+after an architecture scope is bound.
 
 ## Guardrails
 
@@ -18,7 +28,7 @@ at most one, and stop. A defensible no-finding result is successful.
   performance, or generic code-quality audit work.
 - Do not require `CONTEXT.md`, add a configuration system, create a separate
   design Skill, grill the operator, design an interface, or implement a finding.
-- Do not load prior Improve report contents unless the operator names one.
+- Do not load prior Deepen report contents unless the operator names one.
 
 ## Run the bounded phases
 
@@ -30,7 +40,7 @@ at most one, and stop. A defensible no-finding result is successful.
    variation tests, and reject speculative seams.
 3. Read [report-and-retention.md](references/report-and-retention.md). Write one
    self-contained, marker-bearing HTML report under the ignored
-   `.shea/local/improve/<run-id>/` boundary and verify its limits.
+   `.shea/local/deepen/<run-id>/` boundary and verify its limits.
 4. Present the report and ask the operator to ignore a candidate, capture it
    through `$shea-backlog`, or discuss it through
    `$shea-issue-forge`.

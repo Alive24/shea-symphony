@@ -1,0 +1,4 @@
+interface:
+  display_name: "Shea Symphony Deepen"
+  short_description: "Find bounded architecture deepening opportunities"
+  default_prompt: "Use $shea-deepen on an operator-selected area to produce a bounded local architecture report without changing the repository."

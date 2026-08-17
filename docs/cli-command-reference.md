@@ -719,12 +719,12 @@ in temporary staging for selected harnesses and does not invoke its later
 `check` or `update` lifecycle.
 
 The core target inventory includes Issue Forge, Backlog, Manual Main, Agent
-Review, Human Review, Manual Merge, and Doctor. Improve and the HALO research
+Review, Human Review, Manual Merge, and Doctor. Deepen and the HALO research
 seed are optional. Setup Shea remains global rather than target-vendored. Human
 Review is an operator-owned briefing and UAT decision skill: it records a
 structured decision note and routes to `Merging`, `Rework`, or
 `Need Human Input` only after explicit operator confirmation. Backlog and
-Improve remain Skill behaviors, not Shea Symphony CLI subcommands.
+Deepen remain Skill behaviors, not Shea Symphony CLI subcommands.
 `forge create`, `forge promote`, `forge rework`, and `forge validate` remain
 deterministic CLI executor surfaces.
 
@@ -732,7 +732,7 @@ The normal operational Skills consume semantic names from
 `.shea/contracts/workflow-capability.v1.md`; command spellings in this reference
 belong to the Legacy adapter and are intentionally not copied into those Skills.
 
-## Backlog And Improve Skills
+## Backlog And Deepen Skills
 
 `shea-backlog` is the routine checkpoint and residual-memory Skill. It
 summarizes current progress, blockers, and eligible next work; captures bounded
@@ -741,19 +741,19 @@ an exact confirmed Backlog seed through the guarded workflow, but it does not
 draft or execute promotion. An operator-selected candidate returns to
 `shea-issue-forge` for executable shaping.
 
-`shea-improve` runs only when explicitly invoked. It scopes an
+`shea-deepen` scopes an
 operator-named area before scanning, or infers one bounded recent-change hot
 spot when no area is supplied. It applies the internal deep-module, deletion,
 real-variation, locality, leverage, and dependency-aware testing lenses, then
 writes a self-contained report under ignored
-`.shea/local/improve/<run-id>/`. Reports contain zero to three candidates and at
+`.shea/local/deepen/<run-id>/`. Reports contain zero to three candidates and at
 most one recommendation, use no CDN or remote asset, and never modify source,
 docs, ADRs, tracker state, or Skills. The operator may ignore a candidate,
 capture it through Backlog, or discuss it through Issue Forge.
 
 Historical `docs/dream-log/` records remain archived evidence. They are not an
 active Skill input or execution authority and are never loaded automatically by
-Backlog or Improve.
+Backlog or Deepen.
 
 ## Merge Lane
 

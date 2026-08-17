@@ -6,9 +6,9 @@ const CANONICAL_SKILLS: &[&str] = &[
     "setup-shea",
     "shea-halo-research-seed",
     "shea-backlog",
+    "shea-deepen",
     "shea-doctor",
     "shea-human-review",
-    "shea-improve",
     "shea-issue-forge",
     "shea-manual-main",
     "shea-manual-merge",
@@ -143,7 +143,7 @@ fn installable_manifest_declares_core_and_explicit_optional_groups() {
         BTreeSet::from([
             "core".into(),
             "halo_research".into(),
-            "improve".into(),
+            "deepen".into(),
             "parent_subissues".into(),
             "shea_docs".into(),
         ])
@@ -152,7 +152,7 @@ fn installable_manifest_declares_core_and_explicit_optional_groups() {
     assert_eq!(groups["shea_docs"]["available"], false);
     let core = serde_json::to_string(&groups["core"]).unwrap();
     assert!(!core.contains("setup-shea"));
-    assert!(!core.contains("shea-improve"));
+    assert!(!core.contains("shea-deepen"));
     assert!(!core.contains("shea-halo-research-seed"));
     assert!(!core.contains("parent-batch-readiness-report"));
 }
@@ -373,14 +373,48 @@ fn backlog_skill_owns_bounded_memory_but_not_promotion_or_execution() {
 }
 
 #[test]
-fn improve_skill_is_an_explicit_bounded_report_only_router() {
-    let skill = skill_file("shea-improve", "SKILL.md");
-    let metadata = skill_file("shea-improve", "agents/openai.yaml");
+fn deepen_skill_is_a_bounded_report_only_router() {
+    let skill = skill_file("shea-deepen", "SKILL.md");
+    let metadata = skill_file("shea-deepen", "agents/openai.yaml");
 
     assert!(
         skill.lines().count() < 70,
-        "Improve must stay a concise router"
+        "Deepen must stay a concise router"
     );
+    let description = frontmatter_value(&skill, "description").unwrap();
+    for trigger in [
+        "code",
+        "runtime",
+        "workflow-contract",
+        "test area",
+        "cross-file change friction",
+        "deepen modules",
+        "test seams",
+    ] {
+        assert!(
+            description.contains(trigger),
+            "Deepen missing trigger: {trigger}"
+        );
+    }
+    for exclusion in [
+        "documentation correctness",
+        "freshness",
+        "reconciliation",
+        "OpenWiki",
+        "concrete failure",
+        "stuck-execution",
+        "faulty-configuration",
+        "implementation",
+    ] {
+        assert!(
+            description.contains(exclusion),
+            "Deepen missing exclusion: {exclusion}"
+        );
+    }
+    assert!(skill.contains("Route by primary object"));
+    assert!(skill.contains("behavior-bearing Markdown"));
+    assert!(skill.contains("$shea-doctor"));
+    assert!(skill.contains("$shea-docs"));
     let references = relative_markdown_links(&skill)
         .into_iter()
         .map(str::to_owned)
@@ -393,15 +427,16 @@ fn improve_skill_is_an_explicit_bounded_report_only_router() {
             "references/scope-and-evidence.md".to_string(),
         ])
     );
-    assert!(metadata.contains("allow_implicit_invocation: false"));
+    assert!(!metadata.contains("allow_implicit_invocation: false"));
+    assert!(metadata.contains("$shea-deepen"));
     assert!(!repo_path(".agents/skills/codebase-design").exists());
-    assert!(!repo_path(".agents/skills/shea-improve/scripts").exists());
-    assert!(!repo_path(".agents/skills/shea-improve/assets").exists());
+    assert!(!repo_path(".agents/skills/shea-deepen/scripts").exists());
+    assert!(!repo_path(".agents/skills/shea-deepen/assets").exists());
 }
 
 #[test]
-fn improve_fixtures_cover_scope_candidates_no_finding_and_report_limits() {
-    let root = repo_path(".agents/skills/shea-improve/fixtures");
+fn deepen_fixtures_cover_scope_candidates_routing_no_finding_and_report_limits() {
+    let root = repo_path(".agents/skills/shea-deepen/fixtures");
     let actual = fs::read_dir(root)
         .unwrap()
         .filter_map(Result::ok)
@@ -412,6 +447,7 @@ fn improve_fixtures_cover_scope_candidates_no_finding_and_report_limits() {
         "no-finding.md",
         "recent-hotspot.md",
         "report-constraints.md",
+        "routing-boundary.md",
         "speculative-seam.md",
         "strong-candidate.md",
     ]
@@ -420,6 +456,20 @@ fn improve_fixtures_cover_scope_candidates_no_finding_and_report_limits() {
     .collect::<BTreeSet<_>>();
 
     assert_eq!(actual, expected);
+
+    let routing = skill_file("shea-deepen", "fixtures/routing-boundary.md");
+    for prompt in [
+        "评估一下当前 docs 的状态",
+        "文档说的是 Temporal，但代码还是 Legacy",
+        "这些 Markdown prompt 的组织方式导致跨文件修改",
+        "Review prompt 让 Agent 卡住了，帮我修",
+        "看看代码有哪些值得深化的模块边界",
+    ] {
+        assert!(routing.contains(prompt), "missing routing prompt: {prompt}");
+    }
+    for route in ["without Deepen or Doctor", "through Deepen", "$shea-doctor"] {
+        assert!(routing.contains(route), "missing routing result: {route}");
+    }
 }
 
 fn walk_files(root: &Path) -> Vec<PathBuf> {
@@ -440,6 +490,35 @@ fn doctor_skill_keeps_repairs_bounded_without_upstream_parity_management() {
     let doctor = skill_file("shea-doctor", "SKILL.md");
     let reference = skill_file("shea-doctor", "references/repository-contract-repair.md");
     let metadata = skill_file("shea-doctor", "agents/openai.yaml");
+    let description = frontmatter_value(&doctor, "description").unwrap();
+
+    for trigger in [
+        "concrete Shea Symphony",
+        "faulty-configuration",
+        "stuck-execution",
+        "diagnosis or repair",
+    ] {
+        assert!(
+            description.contains(trigger),
+            "Doctor missing trigger: {trigger}"
+        );
+    }
+    for exclusion in [
+        "general architecture",
+        "change-locality",
+        "documentation quality",
+        "freshness",
+        "reconciliation",
+        "OpenWiki",
+    ] {
+        assert!(
+            description.contains(exclusion),
+            "Doctor missing exclusion: {exclusion}"
+        );
+    }
+    assert!(doctor.contains("Route by primary object"));
+    assert!(doctor.contains("$shea-deepen"));
+    assert!(doctor.contains("$shea-docs"));
 
     for marker in [
         "repository_contract_repair",
@@ -463,6 +542,31 @@ fn doctor_skill_keeps_repairs_bounded_without_upstream_parity_management() {
     assert!(reference.contains("## Shea Symphony Contract Repair Plan"));
     assert!(reference.contains("## Shea Symphony Doctor Contract Repair"));
     assert!(metadata.contains("$shea-doctor"));
+}
+
+#[test]
+fn removed_architecture_skill_identity_is_absent_from_active_sources() {
+    let removed = ["shea", "improve"].join("-");
+    assert!(!repo_path(&format!(".agents/skills/{removed}")).exists());
+
+    let mut files = Vec::new();
+    for root in [".agents", ".shea", "docs", "README.md", "tests"] {
+        let path = repo_path(root);
+        if path.is_dir() {
+            files.extend(walk_files(&path));
+        } else {
+            files.push(path);
+        }
+    }
+
+    for file in files {
+        if let Ok(source) = fs::read_to_string(&file) {
+            assert!(
+                !source.contains(&removed),
+                "removed architecture Skill identity remains in {file:?}"
+            );
+        }
+    }
 }
 
 #[test]

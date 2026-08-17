@@ -2,7 +2,7 @@
 
 Dream retired as an active Skill on 2026-08-16. This directory preserves its
 historical logs as archived evidence; no new Dream runs or logs should be
-created. Backlog and Improve never load these records automatically.
+created. Backlog and Deepen never load these records automatically.
 
 Archived Dream Logs are advisory context. They do not authorize Main, Review,
 Merge, or Doctor lane actions. Open one only when a current issue contract or
@@ -96,7 +96,7 @@ operator request cites it directly.
 - Start with this index when a current contract cites historical Dream evidence.
 - Open the named run's `RUN.md` before any topic log.
 - Do not sweep recent directories, infer current work from the archive, or load
-  it as routine Backlog or Improve context.
+  it as routine Backlog or Deepen context.
 
 ## Archived Run Directory Shape
 
@@ -129,7 +129,7 @@ Use these exact references in Dream-created Backlog seeds:
   issue contract requires it.
 - Doctor may use Dream Logs as advisory context only, never as workflow
   invariants.
-- Backlog and Improve do not load Dream Logs automatically. Issue Forge opens a
+- Backlog and Deepen do not load Dream Logs automatically. Issue Forge opens a
   log only when the operator or current issue contract names it.
 
 ## Archive Notes

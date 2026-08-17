@@ -6,9 +6,9 @@ Produce one local visual artifact without making repository-visible changes.
 
 1. Resolve the Git root and require `.shea/local/` to be ignored by Git. If it
    is not ignored, stop; do not edit `.gitignore` automatically.
-2. Use `.shea/local/improve/<run-id>/`, where `run-id` is a generated UTC
+2. Use `.shea/local/deepen/<run-id>/`, where `run-id` is a generated UTC
    timestamp plus a short safe slug, never an unchecked path from user input.
-3. Create `.shea-improve-run.json` before the report with schema version, run
+3. Create `.shea-deepen-run.json` before the report with schema version, run
    id, repository identity, selected scope, and creation time. This is the
    cleanup marker; include no credentials or ambient environment.
 4. Write only `report.html` beside the marker. Confirm `git status --short`
@@ -47,8 +47,8 @@ Prepare the exact oldest marked directory for deletion and obtain operator
 confirmation before cleanup. If confirmation is declined, do not create a new
 run.
 
-Delete only a direct child of the resolved `.shea/local/improve/` root when it
-is not a symlink, contains a valid matching `.shea-improve-run.json`, and has
+Delete only a direct child of the resolved `.shea/local/deepen/` root when it
+is not a symlink, contains a valid matching `.shea-deepen-run.json`, and has
 the expected `report.html`. Stop on unmarked, malformed, oversized, nested, or
 path-escaping content. Never delete the root, the current run, an unresolved
 path, or any repository-visible file.

@@ -543,7 +543,7 @@ metadata, and does not invoke its later `check` or `update` lifecycle.
 The repository-owned Skills preserve the same lane boundaries as the Shea Symphony CLI:
 Issue Forge handles executable contract shaping and Human Review -> Rework
 revision discussion; Backlog handles current checkpoints and bounded residual
-memory; Improve is explicitly invoked and report-only. The CLI owns `forge
+memory; Deepen is report-only. The CLI owns `forge
 create`, `forge promote`, `forge rework`, and `forge validate`. Manual Main
 stops at `Agent Review`; Manual Review owns
 evidence-backed review routing; Human Review briefs the operator for UAT and
@@ -686,17 +686,17 @@ queue, doctor health, smoke readiness, runtime/session state, cleanup/audit
 status, and lane-specific next commands without claiming work, starting workers,
 repairing state, cleaning artifacts, or implying unattended readiness.
 
-## Improve
+## Deepen
 
-Invoke `shea-improve` explicitly when the operator wants a bounded
+Use `shea-deepen` when the operator wants a bounded
 architecture-deepening review. Name an area when possible; otherwise the Skill
 uses a limited recent-change window to infer one hot spot before scanning. It
 looks for experienced comprehension, change, and testing friction, applies the
 deletion and real-variation tests, and accepts a no-finding result.
 
-Improve writes one marker-bearing, self-contained report under ignored
-`.shea/local/improve/<run-id>/`. The report contains no remote assets, at most
-three candidates, and at most one recommendation. Improve changes no source,
+Deepen writes one marker-bearing, self-contained report under ignored
+`.shea/local/deepen/<run-id>/`. The report contains no remote assets, at most
+three candidates, and at most one recommendation. Deepen changes no source,
 tests, docs, ADRs, Project state, issues, or Skills. After presentation, the
 operator may ignore a candidate, capture it through Backlog, or discuss it
 through Issue Forge; the Skill does not enter interface design or implementation.

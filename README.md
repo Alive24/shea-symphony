@@ -46,13 +46,13 @@ After setting up Shea Symphony, the desired human workflow looks like this:
 
 1. Use `shea-issue-forge` to shape ideas into executable issue contracts.
 2. Use `shea-backlog` for progress checkpoints, blocker summaries, and bounded residual-work memory; selected seeds return to Issue Forge for shaping.
-3. Invoke `shea-improve` explicitly for a report-only search for architectural deepening opportunities.
+3. Use `shea-deepen` for a report-only search for architectural deepening opportunities.
 4. Use `shea-human-review` for issues waiting for final UAT and approval.
 5. Use `shea-doctor` for concrete failures that need diagnosis or recovery.
 
 Global `setup-shea` installs the manifest-declared core resource group from one
 immutable stable release. Target repositories own the installed Skills,
-lane/backend prompts, templates, and workflow configuration. Improve, HALO
+lane/backend prompts, templates, and workflow configuration. Deepen, HALO
 research, and parent/subissue resources are explicit optional groups;
 `setup-shea` itself is never vendored into the target payload.
 
@@ -63,7 +63,7 @@ research, and parent/subissue resources are explicit optional groups;
 - A "grill-me" style dialectical experience activated by a configurable skill for the operator to shape ideas into executable issue contracts.
 - An issue quality gate before dispatch to ensure the issue is clear enough to dispatch.
 - A bounded Backlog skill for current checkpoints and residual-work memory, with executable shaping kept in Issue Forge.
-- An explicitly invoked Improve skill that reports evidence-backed architecture opportunities without changing the repository.
+- A Deepen skill that reports evidence-backed architecture opportunities without changing the repository.
 
 #### Lane Model
 
@@ -112,7 +112,7 @@ The tracker stays the shared source of truth. Local artifacts, worktrees, logs, 
 - **Merge lane** lands approved PRs, repairs safe mechanical drift, and routes real uncertainty to `Need Human Input`.
 - **Workpads and timeline evidence** keep the issue readable after the run.
 - **Doctor and status surfaces** explain stuck states without requiring a low-level log expedition.
-- **Backlog** preserves bounded progress, blocker, and residual-work memory; **Improve** produces optional local architecture reports, and Issue Forge alone shapes selected candidates into executable work.
+- **Backlog** preserves bounded progress, blocker, and residual-work memory; **Deepen** produces optional local architecture reports, and Issue Forge alone shapes selected candidates into executable work.
 
 The intended feeling is closer to a team cockpit than a prompt runner. You should be able to leave work moving, come back later, and understand what happened from the issue, PR, workpad, and status output.
 
@@ -173,7 +173,7 @@ Role boundaries matter:
 - Review evidence gates movement toward `Human Review` or `Merging`.
 - Human approval gates ordinary merges.
 - Merge repair stays in the merge lane unless it needs a real human decision.
-- Backlog seeds and Improve reports are advisory until an operator selects a candidate for Issue Forge shaping.
+- Backlog seeds and Deepen reports are advisory until an operator selects a candidate for Issue Forge shaping.
 
 Write-mode commands should record evidence before state transitions, preserve claims and audit records, and fail closed when the safe next action is unclear.
 

@@ -97,8 +97,7 @@ impl AgentReviewReport {
     }
 
     pub(crate) fn legacy_backend_missing_review_result(&self) -> bool {
-        matches!(self.reviewer_backend.as_str(), "agy-cli" | "gemini-cli")
-            && !self.has_parsed_review_result()
+        self.reviewer_backend == "gemini-cli" && !self.has_parsed_review_result()
     }
 
     /// Returns whether a confirmed non-UAT finding requires implementation rework.

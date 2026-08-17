@@ -346,8 +346,8 @@ dogfood.
 For live Agent Review, make the selected backend command visible to the worker
 process. `review loop` owns the Review Agent claim and final routing; the
 backend process is report-only. The canonical workflow continues to use `agy`
-headlessly, while `codex-app-server` and `claude-code` are available as
-independent structured, read-only reviewers.
+headlessly with native schema-constrained JSON output, while `codex-app-server`
+and `claude-code` are available as independent structured, read-only reviewers.
 
 Prefer an absolute `agy` path for automatic review workers:
 
@@ -364,6 +364,27 @@ review_lane:
   agy_command: /Users/chuntengxiao/.local/bin/agy
   agy_model: gemini-3.1-pro-preview
 ```
+
+Shea checks the configured agy executable for `--output-format json` and
+`--json-schema` support before launch; compatible future versions are accepted
+without an exact version pin. The backend passes the shared Review schema and
+routes only from the validated `structured_output` inside agy's provider
+envelope. It disables slash-command expansion, requires a clean local checkout
+at the current linked PR head SHA, and launches AGY in a detached temporary local
+Git clone using standard `git clone --local` hard-link behavior rather than a
+platform-specific sandbox. Git metadata stays inside the temporary root;
+immutable object storage is reused through hard links, while the checkout,
+index, refs, config, and `HEAD` are disposable. The wrapper points
+`CARGO_TARGET_DIR` and temporary-file variables outside that checkout. It
+records and discards isolated untracked scratch, removes the temporary clone
+after completion or cancellation, and rejects canonical mutation, isolated
+tracked-file/`HEAD` changes, or cleanup failure. Inspect the Review output
+artifact for raw stdout/stderr, provider envelope, extracted result,
+parsing/workspace-integrity diagnostics, exit status, conversation ID,
+expected/reviewed/completed and isolated revisions, discarded untracked paths,
+cleanup evidence, and terminal-routing evidence. Missing capabilities, malformed envelopes,
+invalid or contradictory structured fields, provider failures, and zero-exit
+responses without a valid structured result all fail closed.
 
 For Codex Review, the Review-specific command overrides `codex.command`; omit
 it to use the shared command. The safe capability defaults are also shown

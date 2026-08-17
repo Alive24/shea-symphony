@@ -13,7 +13,9 @@ use shea_symphony::lane_claim::{
 use shea_symphony::model::TrackerIssue;
 use shea_symphony::progress::{run_with_progress_heartbeat, ProgressHeartbeatSpec};
 use shea_symphony::prompt::render_prompt;
-use shea_symphony::prompt_runtime::AUTOMATIC_HEADLESS_REVIEW_BOUNDARY;
+use shea_symphony::prompt_runtime::{
+    AUTOMATIC_HEADLESS_REVIEW_BOUNDARY, AUTOMATIC_HEADLESS_STRUCTURED_REVIEW_BOUNDARY,
+};
 use shea_symphony::review::{
     gemini_review_health_diagnostic, persist_review_job_ledger_record,
     poll_review_job_until_terminal, render_repeated_review_failure_workpad,
@@ -857,7 +859,11 @@ fn automatic_review_request(
 ) -> Result<ReviewRequest, shea_symphony::prompt::PromptError> {
     Ok(ReviewRequest {
         issue: issue.clone(),
-        prompt: render_automatic_review_prompt(workflow, issue)?,
+        prompt: render_automatic_review_prompt_for_backend(
+            workflow,
+            issue,
+            review_backend_kind_from_config(&config.review),
+        )?,
         workspace: review_workspace_for_issue(config, issue),
         artifact_root: config.observability.logs_root.join("reviews"),
     })
@@ -898,16 +904,29 @@ pub(crate) fn strong_canonical_review_workspace(report: &IssueWorkspaceReport) -
     Some(candidate.path.clone())
 }
 
+#[cfg(test)]
 pub(crate) fn render_automatic_review_prompt(
     workflow: &WorkflowDefinition,
     issue: &TrackerIssue,
+) -> Result<String, shea_symphony::prompt::PromptError> {
+    render_automatic_review_prompt_for_backend(workflow, issue, "legacy-text")
+}
+
+pub(crate) fn render_automatic_review_prompt_for_backend(
+    workflow: &WorkflowDefinition,
+    issue: &TrackerIssue,
+    backend: &str,
 ) -> Result<String, shea_symphony::prompt::PromptError> {
     let mut prompt = render_prompt(
         workflow.prompt_for_lane(AgentLane::ReviewAgent),
         issue,
         None,
     )?;
-    prompt.push_str(AUTOMATIC_HEADLESS_REVIEW_BOUNDARY);
+    prompt.push_str(if backend == "agy-cli" {
+        AUTOMATIC_HEADLESS_STRUCTURED_REVIEW_BOUNDARY
+    } else {
+        AUTOMATIC_HEADLESS_REVIEW_BOUNDARY
+    });
     Ok(prompt)
 }
 

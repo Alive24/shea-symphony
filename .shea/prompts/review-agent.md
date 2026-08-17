@@ -20,7 +20,9 @@ Fail closed unless the issue is in Agent Review with one ready non-draft linked 
 
 ## Required result
 
-Use exactly one terminal marker:
+When the Review wrapper supplies a native JSON Schema, return only the schema-constrained JSON object. Use `terminal_classification: pass`, `rework`, or `needs_context` with findings consistent with that classification.
+
+For a legacy text backend without a native schema, use exactly one terminal marker as the first non-empty line:
 
 - `Review Result: PASS` — no blocking finding.
 - `Review Result: REWORK` — confirmed implementation defects require Main changes.

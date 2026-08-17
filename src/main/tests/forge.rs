@@ -184,7 +184,7 @@ fn manual_main_claim_rejects_parent_with_incomplete_native_subissues() {
 fn renders_strict_promotion_note_template() {
     let note = render_promotion_note(
         "#262",
-        "Standardize Issue Forge Reflect promotion notes",
+        "Standardize Issue Forge promotion notes",
         &PromotionNoteInput {
             operator_confirmation: "promote it".into(),
             decisions: vec!["Use the CLI as the enforcement point.".into()],

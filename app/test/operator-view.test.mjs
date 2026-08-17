@@ -1143,7 +1143,7 @@ test('human handoff prompt launches the authoritative skill with refreshable iss
 
   const templates = loadHumanHandoffPromptTemplates();
   const prompt = buildHandoffPrompt(issue, templates);
-  assert.match(prompt, /Use the shea-symphony-human-review skill for #436/);
+  assert.match(prompt, /Use the shea-human-review skill for #436/);
   assert.match(prompt, /State: Human Review/);
   assert.match(prompt, /refresh them before relying on them/);
   assert.match(prompt, /sole authoritative Human Review contract/);
@@ -1157,15 +1157,15 @@ test('human handoff prompt files own each state-specific skill', () => {
 
   assert.match(
     buildHandoffPrompt({ id: '#1', state: 'Need to Clarify' }, templates),
-    /shea-symphony-issue-forge/
+    /shea-issue-forge/
   );
   assert.match(
     buildHandoffPrompt({ id: '#2', state: 'Need Human Input' }, templates),
-    /shea-symphony-doctor/
+    /shea-doctor/
   );
   assert.match(
     buildHandoffPrompt({ id: '#3', state: 'Human Review' }, templates),
-    /shea-symphony-human-review/
+    /shea-human-review/
   );
 });
 

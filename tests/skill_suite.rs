@@ -5,14 +5,14 @@ use std::path::{Path, PathBuf};
 const CANONICAL_SKILLS: &[&str] = &[
     "setup-shea",
     "shea-halo-research-seed",
-    "shea-symphony-backlog",
-    "shea-symphony-doctor",
-    "shea-symphony-human-review",
-    "shea-symphony-improve",
-    "shea-symphony-issue-forge",
-    "shea-symphony-manual-main",
-    "shea-symphony-manual-merge",
-    "shea-symphony-manual-review",
+    "shea-backlog",
+    "shea-doctor",
+    "shea-human-review",
+    "shea-improve",
+    "shea-issue-forge",
+    "shea-manual-main",
+    "shea-manual-merge",
+    "shea-agent-review",
 ];
 
 fn repo_path(path: &str) -> PathBuf {
@@ -132,10 +132,120 @@ fn canonical_skill_frontmatter_metadata_and_resources_are_structurally_valid() {
 }
 
 #[test]
+fn installable_manifest_declares_core_and_explicit_optional_groups() {
+    let manifest: serde_json::Value =
+        serde_json::from_str(&repo_file(".shea/resources.v1.json")).unwrap();
+    assert_eq!(manifest["schema_version"], 1);
+    assert_eq!(manifest["core_group"], "core");
+    let groups = manifest["groups"].as_object().unwrap();
+    assert_eq!(
+        groups.keys().cloned().collect::<BTreeSet<_>>(),
+        BTreeSet::from([
+            "core".into(),
+            "halo_research".into(),
+            "improve".into(),
+            "parent_subissues".into(),
+            "shea_docs".into(),
+        ])
+    );
+    assert_eq!(groups["core"]["optional"], false);
+    assert_eq!(groups["shea_docs"]["available"], false);
+    let core = serde_json::to_string(&groups["core"]).unwrap();
+    assert!(!core.contains("setup-shea"));
+    assert!(!core.contains("shea-improve"));
+    assert!(!core.contains("shea-halo-research-seed"));
+    assert!(!core.contains("parent-batch-readiness-report"));
+}
+
+#[test]
+fn renamed_core_skills_have_no_compatibility_alias_directories() {
+    for removed in [
+        "shea-symphony-issue-forge",
+        "shea-symphony-backlog",
+        "shea-symphony-doctor",
+        "shea-symphony-human-review",
+        "shea-symphony-manual-main",
+        "shea-symphony-manual-review",
+        "shea-symphony-manual-merge",
+        "shea-symphony-improve",
+    ] {
+        assert!(!repo_path(&format!(".agents/skills/{removed}")).exists());
+    }
+}
+
+#[test]
+fn issue_forge_is_a_short_phase_router_with_complete_guidance() {
+    let skill = skill_file("shea-issue-forge", "SKILL.md");
+    assert!(skill.lines().count() < 70);
+    let links = relative_markdown_links(&skill)
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        links,
+        BTreeSet::from([
+            "references/contract.md".into(),
+            "references/creation.md".into(),
+            "references/discussion.md".into(),
+            "references/promotion.md".into(),
+            "references/rework.md".into(),
+            "references/tracker-hygiene.md".into(),
+        ])
+    );
+    let combined = links
+        .iter()
+        .map(|path| skill_file("shea-issue-forge", path))
+        .collect::<Vec<_>>()
+        .join("\n");
+    for marker in [
+        "Issue Quality Gate",
+        "Prepare, Confirm, Execute",
+        "`issue.create`",
+        "`issue.promote`",
+        "`issue.rework`",
+        "Subissue Human Review Exception",
+    ] {
+        assert!(
+            combined.contains(marker),
+            "missing Forge coverage: {marker}"
+        );
+    }
+}
+
+#[test]
+fn retained_templates_have_taxonomy_and_identified_consumers() {
+    let root = repo_path(".shea/template");
+    let audit = repo_file("docs/template-consumer-audit.md");
+    let files = walk_files(&root)
+        .into_iter()
+        .filter(|path| path.extension().is_some_and(|extension| extension == "md"))
+        .collect::<Vec<_>>();
+    assert_eq!(files.len(), 25);
+    for path in files {
+        let relative = path.strip_prefix(repo_path(".shea")).unwrap();
+        let relative = relative.to_string_lossy();
+        assert!(
+            relative.starts_with("template/workpad/")
+                || relative.starts_with("template/evidence/")
+                || relative.starts_with("template/decision/")
+                || relative.starts_with("template/report/"),
+            "unclassified template {relative}"
+        );
+        assert!(
+            audit.contains(relative.as_ref()),
+            "no consumer audit for {relative}"
+        );
+    }
+    assert!(!repo_path(".shea/template/workpad/rework-run.md").exists());
+    assert!(!repo_path(".shea/template/dogfood-body.md").exists());
+}
+
+#[test]
 fn setup_shea_is_a_modular_immutable_release_workflow() {
     let skill = skill_file("setup-shea", "SKILL.md");
     let discovery = skill_file("setup-shea", "references/target-discovery.md");
     let release = skill_file("setup-shea", "references/immutable-release.md");
+    let resources = skill_file("setup-shea", "references/resource-manifest.md");
     let workflow = skill_file("setup-shea", "references/workflow-project.md");
     let reconciliation = skill_file("setup-shea", "references/reconciliation.md");
     let runtime = skill_file("setup-shea", "references/runtime-profile.md");
@@ -148,6 +258,7 @@ fn setup_shea_is_a_modular_immutable_release_workflow() {
     for reference in [
         "target-discovery.md",
         "immutable-release.md",
+        "resource-manifest.md",
         "workflow-project.md",
         "reconciliation.md",
         "runtime-profile.md",
@@ -205,6 +316,9 @@ fn setup_shea_is_a_modular_immutable_release_workflow() {
         );
     }
     assert!(readiness.contains("Prove No Claim"));
+    assert!(resources.contains("Install the complete core closure by default"));
+    assert!(resources.contains("`setup-shea` is global"));
+    assert!(resources.contains("exact staged files"));
     assert!(readiness.contains("launched no Main, Review, or Merge agent"));
     assert!(!repo_path(".agents/skills/setup-shea/assets").exists());
     assert!(!repo_path(".agents/skills/setup-shea/scripts").exists());
@@ -246,7 +360,7 @@ fn setup_shea_fixtures_cover_initial_repeat_conflict_failure_and_pin_cases() {
 
 #[test]
 fn backlog_skill_owns_bounded_memory_but_not_promotion_or_execution() {
-    let backlog = skill_file("shea-symphony-backlog", "SKILL.md");
+    let backlog = skill_file("shea-backlog", "SKILL.md");
 
     assert!(
         backlog.lines().count() < 80,
@@ -255,13 +369,13 @@ fn backlog_skill_owns_bounded_memory_but_not_promotion_or_execution() {
     assert!(backlog.contains(".shea/contracts/workflow-capability.v1.md"));
     assert!(backlog.contains("`issue.create`"));
     assert!(!backlog.contains("`issue.promote`"));
-    assert!(backlog.contains("$shea-symphony-issue-forge"));
+    assert!(backlog.contains("$shea-issue-forge"));
 }
 
 #[test]
 fn improve_skill_is_an_explicit_bounded_report_only_router() {
-    let skill = skill_file("shea-symphony-improve", "SKILL.md");
-    let metadata = skill_file("shea-symphony-improve", "agents/openai.yaml");
+    let skill = skill_file("shea-improve", "SKILL.md");
+    let metadata = skill_file("shea-improve", "agents/openai.yaml");
 
     assert!(
         skill.lines().count() < 70,
@@ -281,13 +395,13 @@ fn improve_skill_is_an_explicit_bounded_report_only_router() {
     );
     assert!(metadata.contains("allow_implicit_invocation: false"));
     assert!(!repo_path(".agents/skills/codebase-design").exists());
-    assert!(!repo_path(".agents/skills/shea-symphony-improve/scripts").exists());
-    assert!(!repo_path(".agents/skills/shea-symphony-improve/assets").exists());
+    assert!(!repo_path(".agents/skills/shea-improve/scripts").exists());
+    assert!(!repo_path(".agents/skills/shea-improve/assets").exists());
 }
 
 #[test]
 fn improve_fixtures_cover_scope_candidates_no_finding_and_report_limits() {
-    let root = repo_path(".agents/skills/shea-symphony-improve/fixtures");
+    let root = repo_path(".agents/skills/shea-improve/fixtures");
     let actual = fs::read_dir(root)
         .unwrap()
         .filter_map(Result::ok)
@@ -323,12 +437,9 @@ fn walk_files(root: &Path) -> Vec<PathBuf> {
 
 #[test]
 fn doctor_skill_keeps_repairs_bounded_without_upstream_parity_management() {
-    let doctor = skill_file("shea-symphony-doctor", "SKILL.md");
-    let reference = skill_file(
-        "shea-symphony-doctor",
-        "references/repository-contract-repair.md",
-    );
-    let metadata = skill_file("shea-symphony-doctor", "agents/openai.yaml");
+    let doctor = skill_file("shea-doctor", "SKILL.md");
+    let reference = skill_file("shea-doctor", "references/repository-contract-repair.md");
+    let metadata = skill_file("shea-doctor", "agents/openai.yaml");
 
     for marker in [
         "repository_contract_repair",
@@ -351,7 +462,7 @@ fn doctor_skill_keeps_repairs_bounded_without_upstream_parity_management() {
     assert!(!doctor.contains("source/rendered-copy synchronization"));
     assert!(reference.contains("## Shea Symphony Contract Repair Plan"));
     assert!(reference.contains("## Shea Symphony Doctor Contract Repair"));
-    assert!(metadata.contains("$shea-symphony-doctor"));
+    assert!(metadata.contains("$shea-doctor"));
 }
 
 #[test]
@@ -386,7 +497,7 @@ fn doctor_contract_repair_fixtures_cover_safe_refused_and_no_change_results() {
 
     for (name, classifications, disposition) in cases {
         let source = skill_file(
-            "shea-symphony-doctor",
+            "shea-doctor",
             &format!("fixtures/repository-contract-repair/{name}"),
         );
         assert!(source.contains("## Observed evidence"));
@@ -404,13 +515,13 @@ fn doctor_contract_repair_fixtures_cover_safe_refused_and_no_change_results() {
 
 #[test]
 fn lane_skills_preserve_review_workspace_and_subissue_boundaries() {
-    let forge = skill_file("shea-symphony-issue-forge", "SKILL.md");
-    let manual_main = skill_file("shea-symphony-manual-main", "SKILL.md");
-    let manual_review = skill_file("shea-symphony-manual-review", "SKILL.md");
-    let manual_merge = skill_file("shea-symphony-manual-merge", "SKILL.md");
+    let forge = skill_file("shea-issue-forge", "references/discussion.md");
+    let manual_main = skill_file("shea-manual-main", "SKILL.md");
+    let manual_review = skill_file("shea-agent-review", "SKILL.md");
+    let manual_merge = skill_file("shea-manual-merge", "SKILL.md");
 
     assert!(forge.contains("the parent owns final Human Review and UAT"));
-    assert!(forge.contains("Record a Subissue Human Review Exception"));
+    assert!(forge.contains("Subissue Human Review Exception"));
     assert!(manual_review.contains("routes to `Merging`, not `Human Review`"));
     assert!(manual_merge.contains("Do not route native subissue merge repair to `Rework`"));
     assert!(manual_main.contains("Execute one operator-selected Main issue in the current task"));
@@ -423,11 +534,11 @@ fn lane_skills_preserve_review_workspace_and_subissue_boundaries() {
 #[test]
 fn normal_operational_skills_are_compact_capability_consumers() {
     let skills = [
-        "shea-symphony-manual-main",
-        "shea-symphony-manual-review",
-        "shea-symphony-manual-merge",
-        "shea-symphony-human-review",
-        "shea-symphony-doctor",
+        "shea-manual-main",
+        "shea-agent-review",
+        "shea-manual-merge",
+        "shea-human-review",
+        "shea-doctor",
     ];
     let mut total_lines = 0;
 
@@ -460,9 +571,9 @@ fn normal_operational_skills_are_compact_capability_consumers() {
 
 #[test]
 fn human_review_contract_and_templates_support_operator_owned_decisions() {
-    let skill = skill_file("shea-symphony-human-review", "SKILL.md");
-    let template = repo_file(".shea/template/workpad/human-review.md");
-    let brief = repo_file(".shea/template/workpad/parent-batch-human-review-brief.md");
+    let skill = skill_file("shea-human-review", "SKILL.md");
+    let template = repo_file(".shea/template/decision/human-review.md");
+    let report = repo_file(".shea/template/report/parent-batch-readiness-report.md");
     let handoff = repo_file(".shea/prompts/human-review-handoff.md");
 
     for field in [
@@ -480,8 +591,8 @@ fn human_review_contract_and_templates_support_operator_owned_decisions() {
     assert!(template.contains("Request Rework"));
     assert!(template.contains("Need Human Input"));
     assert!(template.contains("Defer"));
-    assert!(brief.contains("This brief is read-only and advisory"));
-    assert!(brief.contains("does not prove parent acceptance"));
+    assert!(report.contains("This readiness report is read-only and advisory"));
+    assert!(report.contains("does not prove parent acceptance"));
     assert!(handoff.contains("sole authoritative Human Review contract"));
 }
 
@@ -490,8 +601,8 @@ fn autoloop_dogfood_docs_and_lane_skills_prefer_the_foreground_loop() {
     let command_reference = repo_file("docs/cli-command-reference.md");
     let operator_dogfood = repo_file("docs/operator-dogfood.md");
     let supervised_runbook = repo_file("docs/supervised-live-dogfood.md");
-    let manual_review = skill_file("shea-symphony-manual-review", "SKILL.md");
-    let manual_merge = skill_file("shea-symphony-manual-merge", "SKILL.md");
+    let manual_review = skill_file("shea-agent-review", "SKILL.md");
+    let manual_merge = skill_file("shea-manual-merge", "SKILL.md");
 
     for document in [
         &command_reference,

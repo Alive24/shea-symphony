@@ -9,9 +9,8 @@ use shea_symphony::lane_claim::LaneClaim;
 use shea_symphony::model::TrackerIssue;
 use shea_symphony::profiles::selected_execution_profile;
 use shea_symphony::progress::run_with_progress_heartbeat;
-use shea_symphony::prompt_runtime::{
-    CODEX_APP_SERVER_CONTINUE_PROMPT, CODEX_APP_SERVER_HANDOFF_BOUNDARY,
-};
+use shea_symphony::prompt::render_template_with_values;
+use shea_symphony::prompt_runtime::CODEX_APP_SERVER_CONTINUE_PROMPT;
 use shea_symphony::runtime_profile::{
     apply_runtime_profile_environment, load_runtime_profile, RuntimeProfile,
 };
@@ -129,7 +128,10 @@ fn execute_issue_once_in_workspace(
             claim,
         )?;
         if config.backend.kind == "codex" && config.codex.command.contains("app-server") {
-            prompt.push_str(CODEX_APP_SERVER_HANDOFF_BOUNDARY);
+            let boundary =
+                render_template_with_values(workflow.backend_prompt("codex_app_server")?, &[])?;
+            prompt.push_str("\n\n");
+            prompt.push_str(&boundary);
         }
         prompt
     };

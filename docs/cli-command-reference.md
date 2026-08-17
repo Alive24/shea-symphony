@@ -20,12 +20,12 @@ break-glass recovery actions, not the standard path. See
 REST-first / GraphQL-required boundaries.
 
 The canonical `.shea/workflows/shea-symphony.md` file is a workflow index/config.
-It references lane-specific prompts in `.shea/prompts/` and required workpad
-templates in `.shea/template/workpad/`. Main, Review, and Merge commands load
-repository Markdown as the prose source; Rust supplies typed interpolation,
-validation, section-aware merge mechanics, and tracker transport. Older fixture
-workflows may still use an inline prompt body. Configured template failures are
-readiness failures and never silently fall back to embedded Rust prose.
+It references lane prompts, backend prompt fragments, and classified workpad,
+evidence, decision, and report templates through the selected closure in
+`.shea/resources.v1.json`. Commands load repository Markdown as the behavioral
+source; Rust supplies typed interpolation, schema/protocol enforcement,
+section-aware merge mechanics, and tracker transport. Configured or selected
+resource failures are readiness failures and never fall back to embedded prose.
 
 ## Read-Only Planning And Inspection
 
@@ -185,7 +185,7 @@ cargo run -- doctor repair 194 --mark-pr-ready --confirm-handoff-ready --write
 ```
 
 For operator-selected stuck states and `Need Human Input` triage, use the
-repo-owned Doctor skill at `.agents/skills/shea-symphony-doctor/SKILL.md` with
+repo-owned Doctor skill at `.agents/skills/shea-doctor/SKILL.md` with
 the supporting spec in `docs/operator-doctor.md`. The skill is a read-first
 diagnostic workflow that produces a structured `Doctor Triage Note`; it does
 not replace the CLI repair commands or authorize automatic Project mutation.
@@ -702,14 +702,14 @@ npx skills add https://github.com/Alive24/shea-symphony/tree/<stable-tag>/.agent
   --skill setup-shea --agent codex --copy --yes
 ```
 
-Invoke `setup-shea` as the only public onboarding entrypoint. It resolves the
-latest stable release once to a full commit, verifies a detached checkout at
-that commit, and runs the standard Skills CLI in a temporary project-local
-staging root to plan selected normal Skills. Only copied Skill directories—not
-temporary `skills-lock.json` metadata—enter target reconciliation. Setup also
-plans workflow, prompt, template, workpad, GitHub Project, and runtime-profile
-changes. Existing differing target files are operator-owned conflicts; setup
-never silently replaces them and never claims or launches an agent lane.
+Invoke global `setup-shea` as the only public onboarding entrypoint. It resolves
+the latest stable release once to a full commit, loads the versioned source
+manifest at that commit, and installs the complete core group plus explicitly
+selected optional groups. The standard Skills CLI copies selected Skill
+directories in temporary staging; setup reconciles the remaining workflow,
+prompt, template, documentation, Project, and runtime-profile effects. It never
+vendors itself. Existing differing target files are operator-owned conflicts;
+setup never silently replaces them and never claims or launches an agent lane.
 
 Vendoring is an initial copy operation, not a managed Shea package lifecycle.
 Afterward the target repository owns those files and may customize them. Shea's
@@ -718,9 +718,9 @@ vendored Skill text with upstream. Setup uses the standard CLI's `--copy` mode
 in temporary staging for selected harnesses and does not invoke its later
 `check` or `update` lifecycle.
 
-The canonical inventory includes Setup Shea, Issue Forge, Backlog, Improve,
-Manual Main, Manual Review, Human Review, Manual Merge, Doctor, and the HALO
-research seed. Human
+The core target inventory includes Issue Forge, Backlog, Manual Main, Agent
+Review, Human Review, Manual Merge, and Doctor. Improve and the HALO research
+seed are optional. Setup Shea remains global rather than target-vendored. Human
 Review is an operator-owned briefing and UAT decision skill: it records a
 structured decision note and routes to `Merging`, `Rework`, or
 `Need Human Input` only after explicit operator confirmation. Backlog and
@@ -734,14 +734,14 @@ belong to the Legacy adapter and are intentionally not copied into those Skills.
 
 ## Backlog And Improve Skills
 
-`shea-symphony-backlog` is the routine checkpoint and residual-memory Skill. It
+`shea-backlog` is the routine checkpoint and residual-memory Skill. It
 summarizes current progress, blockers, and eligible next work; captures bounded
 Backlog seeds; and organizes, deduplicates, or reviews stale seeds. It may create
 an exact confirmed Backlog seed through the guarded workflow, but it does not
 draft or execute promotion. An operator-selected candidate returns to
-`shea-symphony-issue-forge` for executable shaping.
+`shea-issue-forge` for executable shaping.
 
-`shea-symphony-improve` runs only when explicitly invoked. It scopes an
+`shea-improve` runs only when explicitly invoked. It scopes an
 operator-named area before scanning, or infers one bounded recent-change hot
 spot when no area is supplied. It applies the internal deep-module, deletion,
 real-variation, locality, leverage, and dependency-aware testing lenses, then

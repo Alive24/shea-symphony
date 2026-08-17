@@ -41,7 +41,7 @@ consumers:
 | --- | ---: | ---: | --- |
 | Manual Main, Manual Review, Manual Merge, Human Review, Doctor Skills | 1,072 lines | 185 lines | Lane/operator policy plus Workflow Capability references |
 | Main, Review, Merge lane prompts | 242 lines | 73 lines | Concise lane authority and completion protocol |
-| Runtime workpad prose | Scattered Rust builders and partial Markdown fallbacks | Repository Markdown registry | `.shea/template/workpad/*.md` |
+| Runtime template prose | Scattered Rust builders and partial Markdown fallbacks | Manifest-selected repository Markdown registry | `.shea/template/{workpad,evidence,decision,report}/*.md` |
 
 The canonical workflow must name every required workpad template. Validation
 fails closed for a missing map entry or missing, empty, unreadable, or malformed

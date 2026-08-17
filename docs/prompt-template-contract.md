@@ -2,8 +2,8 @@
 
 Status: strict Liquid-compatible rendering.
 
-Shea Symphony renders workflow prompt templates and configured workpad templates
-before launching agents or writing workpad evidence. Rendering uses the Rust
+Shea Symphony renders workflow lane prompts, selected backend fragments, and
+configured runtime templates before launching agents or writing evidence. Rendering uses the Rust
 `liquid` engine with the standard Liquid tag and filter library, plus Shea's
 strict external-context validation.
 
@@ -17,6 +17,12 @@ Prompt templates receive:
 Workpad templates receive the named values supplied by the caller for that
 workpad surface, such as `issue_ref`, `issue_title`, `run_id`, `target_state`,
 or `evidence_summary`.
+
+Backend fragments are repository Markdown. Static fragments receive no dynamic
+context; Merge repair receives only typed conflict facts such as `pr_ref`,
+`head_ref_name`, `expected_base`, and sanitized `mechanical_stderr`. JSON Schema
+construction, output classification, claim identity, and Project mutation
+remain code-owned enforcement.
 
 Examples:
 
@@ -68,8 +74,11 @@ missing data, tolerate misspelled filters, or write partial workpad evidence.
 
 - `prompt_renderer=strict-liquid-compatible`;
 - `prompt_template_smoke.<lane>=pass` for each configured lane prompt;
+- `backend_prompt_source.<id>=...` with the exact selected Markdown path;
 - `workpad_template.<id>=... smoke=pass` for every configured or centralized
-  workpad template.
+  workpad/evidence template;
+- `resource_manifest=... groups=...` and each exact
+  `resource_markdown_source=...` from the enabled closure.
 
 Any parse error, unknown filter, or unknown external variable in a configured
 prompt or workpad template makes validation fail.

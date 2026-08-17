@@ -283,11 +283,11 @@ fn representative_consumers_reference_shared_contracts_without_commands() {
 #[test]
 fn operational_skills_are_real_capability_consumers_not_command_runbooks() {
     for skill in [
-        "shea-symphony-manual-main",
-        "shea-symphony-manual-review",
-        "shea-symphony-manual-merge",
-        "shea-symphony-human-review",
-        "shea-symphony-doctor",
+        "shea-manual-main",
+        "shea-agent-review",
+        "shea-manual-merge",
+        "shea-human-review",
+        "shea-doctor",
     ] {
         let path = format!(".agents/skills/{skill}/SKILL.md");
         let source = repo_file(&path);

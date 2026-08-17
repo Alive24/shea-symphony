@@ -1,8 +1,13 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 use thiserror::Error;
+
+use crate::resource_manifest::{
+    resolve_resource_closure, ResolvedResourceClosure, ResourceManifestError,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct WorkflowDefinition {
@@ -12,6 +17,9 @@ pub struct WorkflowDefinition {
     pub prompt_template: String,
     pub lane_prompts: LanePromptTemplates,
     pub lane_prompt_sources: LanePromptSources,
+    pub backend_prompts: BTreeMap<String, String>,
+    pub backend_prompt_sources: BTreeMap<String, PromptTemplateSource>,
+    pub resource_closure: Option<ResolvedResourceClosure>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,6 +46,7 @@ pub struct PromptTemplateSource {
 pub enum PromptTemplateSourceKind {
     WorkflowPromptFile,
     InlineWorkflowFallback,
+    RepositoryMarkdownDefault,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,41 +82,32 @@ pub enum WorkflowError {
         path: PathBuf,
         source: std::io::Error,
     },
+    #[error("invalid backend prompt configuration: {0}")]
+    InvalidBackendPromptConfig(String),
+    #[error("missing backend prompt `{key}` at {path}: {source}")]
+    MissingBackendPrompt {
+        key: String,
+        path: PathBuf,
+        source: std::io::Error,
+    },
     #[error("invalid workpad template configuration: {0}")]
     InvalidWorkpadTemplateConfig(String),
     #[error("missing required workpad template `{key}` at {path}: {source}")]
     MissingWorkpadTemplate {
-        key: &'static str,
+        key: String,
         path: PathBuf,
         source: std::io::Error,
     },
+    #[error("invalid installable resource closure: {0}")]
+    ResourceManifest(#[from] ResourceManifestError),
 }
 
-/// Workpad templates required whenever a workflow opts into repository Markdown templates.
-pub const REQUIRED_WORKPAD_TEMPLATE_KEYS: &[&str] = &[
-    "main_handoff",
-    "main_handoff_failure",
-    "main_assignee_ownership",
-    "main_quality_gate",
-    "main_runtime_ownership",
-    "main_usage_limit_pause",
-    "parent_topology",
-    "workspace_adoption",
-    "workspace_ensure",
-    "agent_review_run",
-    "agent_review_handoff",
-    "repeated_review_failure",
-    "manual_review",
-    "review_invalid_handoff",
-    "rework_diagnostic",
-    "review_freshness",
-    "merge_run",
+pub const REQUIRED_BACKEND_PROMPT_KEYS: &[&str] = &[
+    "codex_app_server",
+    "automatic_review",
+    "automatic_review_structured",
+    "claude_code_review",
     "merge_repair",
-    "doctor_triage",
-    "human_review_repair",
-    "forge_rework_run",
-    "forge_rework_blocked",
-    "lane_session",
 ];
 
 impl WorkflowDefinition {
@@ -125,7 +125,9 @@ impl WorkflowDefinition {
         let (front_matter, prompt) = split_front_matter(content);
         let config = parse_front_matter(&front_matter)?;
         let workflow_index = prompt.trim().to_string();
+        let resource_closure = resolve_resource_closure(path.as_ref(), &config)?;
         let lane_prompt_bundle = load_lane_prompts(path.as_ref(), &config, &workflow_index)?;
+        let backend_prompt_bundle = load_backend_prompts(path.as_ref(), &config)?;
         validate_workpad_templates(path.as_ref(), &config)?;
 
         Ok(Self {
@@ -135,6 +137,9 @@ impl WorkflowDefinition {
             workflow_index,
             lane_prompts: lane_prompt_bundle.templates,
             lane_prompt_sources: lane_prompt_bundle.sources,
+            backend_prompts: backend_prompt_bundle.templates,
+            backend_prompt_sources: backend_prompt_bundle.sources,
+            resource_closure,
         })
     }
 
@@ -153,6 +158,21 @@ impl WorkflowDefinition {
             AgentLane::MergeAgent => &self.lane_prompt_sources.merge_agent,
         }
     }
+
+    pub fn backend_prompt(&self, key: &str) -> Result<&str, WorkflowError> {
+        self.backend_prompts
+            .get(key)
+            .map(String::as_str)
+            .ok_or_else(|| {
+                WorkflowError::InvalidBackendPromptConfig(format!(
+                    "backend_prompts.{key} is not configured"
+                ))
+            })
+    }
+
+    pub fn backend_prompt_source(&self, key: &str) -> Option<&PromptTemplateSource> {
+        self.backend_prompt_sources.get(key)
+    }
 }
 
 fn validate_workpad_templates(workflow_path: &Path, config: &Value) -> Result<(), WorkflowError> {
@@ -166,26 +186,34 @@ fn validate_workpad_templates(workflow_path: &Path, config: &Value) -> Result<()
         .build()
         .map_err(|error| WorkflowError::InvalidWorkpadTemplateConfig(error.to_string()))?;
 
-    for &key in REQUIRED_WORKPAD_TEMPLATE_KEYS {
-        let relative = templates
-            .get(key)
-            .and_then(Value::as_str)
+    let known = crate::workpad_templates::WorkpadTemplateId::all()
+        .iter()
+        .map(|id| id.key())
+        .collect::<std::collections::BTreeSet<_>>();
+    for (key, value) in templates {
+        if !known.contains(key.as_str()) {
+            return Err(WorkflowError::InvalidWorkpadTemplateConfig(format!(
+                "unknown workpad_templates.{key}"
+            )));
+        }
+        let relative = value
+            .as_str()
             .filter(|value| !value.trim().is_empty())
             .ok_or_else(|| {
                 WorkflowError::InvalidWorkpadTemplateConfig(format!(
-                    "workpad_templates.{key} is required when workpad_templates is configured"
+                    "workpad_templates.{key} must name a repository Markdown file"
                 ))
             })?;
         let path = resolve_workflow_relative_path(workflow_path, relative);
         let body =
             fs::read_to_string(&path).map_err(|source| WorkflowError::MissingWorkpadTemplate {
-                key,
+                key: key.clone(),
                 path: path.clone(),
                 source,
             })?;
         if body.trim().is_empty() {
             return Err(WorkflowError::InvalidWorkpadTemplateConfig(format!(
-                "workpad_templates.{key} is empty at {}; restore the repository Markdown template",
+                "workpad_templates.{key} is empty at {}; restore the selected resource",
                 path.display()
             )));
         }
@@ -214,6 +242,7 @@ impl PromptTemplateSourceKind {
         match self {
             Self::WorkflowPromptFile => "workflow_prompt_file",
             Self::InlineWorkflowFallback => "inline_workflow_fallback",
+            Self::RepositoryMarkdownDefault => "repository_markdown_default",
         }
     }
 }
@@ -222,6 +251,91 @@ impl PromptTemplateSourceKind {
 struct LanePromptBundle {
     templates: LanePromptTemplates,
     sources: LanePromptSources,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BackendPromptBundle {
+    templates: BTreeMap<String, String>,
+    sources: BTreeMap<String, PromptTemplateSource>,
+}
+
+fn load_backend_prompts(
+    workflow_path: &Path,
+    config: &Value,
+) -> Result<BackendPromptBundle, WorkflowError> {
+    let Some(prompt_config) = config.get("backend_prompts") else {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".shea/prompts/backend");
+        let mut templates = BTreeMap::new();
+        let mut sources = BTreeMap::new();
+        for key in REQUIRED_BACKEND_PROMPT_KEYS {
+            let path = root.join(default_backend_prompt_filename(key));
+            let body = fs::read_to_string(&path).map_err(|source| {
+                WorkflowError::MissingBackendPrompt {
+                    key: (*key).into(),
+                    path: path.clone(),
+                    source,
+                }
+            })?;
+            templates.insert((*key).into(), body.trim().into());
+            sources.insert(
+                (*key).into(),
+                PromptTemplateSource {
+                    kind: PromptTemplateSourceKind::RepositoryMarkdownDefault,
+                    path: Some(path),
+                },
+            );
+        }
+        return Ok(BackendPromptBundle { templates, sources });
+    };
+    let prompt_config = prompt_config.as_object().ok_or_else(|| {
+        WorkflowError::InvalidBackendPromptConfig("backend_prompts must be a map/object".into())
+    })?;
+    let mut templates = BTreeMap::new();
+    let mut sources = BTreeMap::new();
+    for key in REQUIRED_BACKEND_PROMPT_KEYS {
+        let relative_path = prompt_config
+            .get(*key)
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| {
+                WorkflowError::InvalidBackendPromptConfig(format!(
+                    "backend_prompts.{key} is required when backend_prompts is configured"
+                ))
+            })?;
+        let path = resolve_workflow_relative_path(workflow_path, relative_path);
+        let body =
+            fs::read_to_string(&path).map_err(|source| WorkflowError::MissingBackendPrompt {
+                key: (*key).into(),
+                path: path.clone(),
+                source,
+            })?;
+        if body.trim().is_empty() {
+            return Err(WorkflowError::InvalidBackendPromptConfig(format!(
+                "backend_prompts.{key} is empty at {}",
+                path.display()
+            )));
+        }
+        templates.insert((*key).into(), body.trim().into());
+        sources.insert(
+            (*key).into(),
+            PromptTemplateSource {
+                kind: PromptTemplateSourceKind::WorkflowPromptFile,
+                path: Some(path),
+            },
+        );
+    }
+    Ok(BackendPromptBundle { templates, sources })
+}
+
+fn default_backend_prompt_filename(key: &str) -> &'static str {
+    match key {
+        "codex_app_server" => "codex-app-server.md",
+        "automatic_review" => "automatic-review.md",
+        "automatic_review_structured" => "automatic-review-structured.md",
+        "claude_code_review" => "claude-code-review.md",
+        "merge_repair" => "merge-repair.md",
+        _ => unreachable!("validated backend prompt key"),
+    }
 }
 
 impl WorkflowStore {
@@ -407,12 +521,13 @@ mod tests {
         let template_dir = temp.path().join("templates");
         fs::create_dir(&template_dir).unwrap();
         let mut mappings = Vec::new();
-        for key in REQUIRED_WORKPAD_TEMPLATE_KEYS {
-            if omitted_key == Some(*key) {
+        for id in crate::workpad_templates::WorkpadTemplateId::all() {
+            let key = id.key();
+            if omitted_key == Some(key) {
                 continue;
             }
             let body = body_override
-                .filter(|(override_key, _)| override_key == key)
+                .filter(|(override_key, _)| *override_key == key)
                 .map(|(_, body)| body)
                 .unwrap_or("Valid {{issue_ref}}");
             fs::write(template_dir.join(format!("{key}.md")), body).unwrap();
@@ -538,14 +653,14 @@ mod tests {
     }
 
     #[test]
-    fn configured_workpad_templates_fail_closed_when_required_entry_is_missing() {
+    fn configured_workpad_templates_allow_manifest_selected_subset() {
         let temp = tempfile::tempdir().unwrap();
         let source = configured_workpad_workflow(&temp, Some("merge_run"), None);
-        let error = WorkflowDefinition::parse(temp.path().join("WORKFLOW.md"), &source)
-            .unwrap_err()
-            .to_string();
-
-        assert!(error.contains("workpad_templates.merge_run is required"));
+        let workflow = WorkflowDefinition::parse(temp.path().join("WORKFLOW.md"), &source)
+            .expect("resource closure, not a fixed key bundle, owns required templates");
+        assert!(workflow.config["workpad_templates"]
+            .get("merge_run")
+            .is_none());
     }
 
     #[test]

@@ -1,4 +1,4 @@
-Use the shea-symphony-issue-forge skill for {{ issue.identifier }}.
+Use the shea-issue-forge skill for {{ issue.identifier }}.
 
 Context
 - Issue: {{ issue.identifier }} {{ issue.title }}

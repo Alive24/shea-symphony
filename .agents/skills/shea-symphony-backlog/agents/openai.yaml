@@ -1,4 +1,0 @@
-interface:
-  display_name: "Shea Symphony Backlog"
-  short_description: "Checkpoint and organize bounded Backlog memory"
-  default_prompt: "Use $shea-symphony-backlog to summarize current progress and blockers, then organize bounded Backlog candidates without promoting or executing them."

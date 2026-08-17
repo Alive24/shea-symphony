@@ -361,14 +361,7 @@ fn execute_claude_review(input: ClaudeReviewExecution) -> Result<ClaudeReviewOut
 fn claude_review_prompt(prompt: &str) -> String {
     let schema = serde_json::to_string_pretty(&review_output_schema())
         .expect("static Claude Review schema serializes");
-    format!(
-        "{prompt}\n\n## Claude Review Structured Result\n\
-         Treat the workspace as read-only. Do not edit files or perform remote writes. \
-         Your final result must be only one JSON object matching this schema; do not wrap it in Markdown fences:\n\
-         {schema}\n\
-         A pass must contain no confirmed or needs_context findings. Rework requires at least one confirmed finding. \
-         needs_context requires at least one needs_context finding."
-    )
+    format!("{prompt}\n\n## Required Native JSON Schema\n\n{schema}")
 }
 
 /// Review-specific arguments shown without embedding the full schema in

@@ -16,9 +16,9 @@
   export let view: any;
 
   const skillHandoffs = [
-    { lane: 'Main', name: 'shea-symphony-manual-main', reads: 'Project issue, workpad, linked PR', output: 'Agent Review handoff' },
-    { lane: 'Review', name: 'shea-symphony-manual-review', reads: 'PR diff, tests, review evidence', output: 'Human Review or Rework' },
-    { lane: 'Merge', name: 'shea-symphony-manual-merge', reads: 'Approved PR, freshness, CI', output: 'Done or merge-lane repair' }
+    { lane: 'Main', name: 'shea-manual-main', reads: 'Project issue, workpad, linked PR', output: 'Agent Review handoff' },
+    { lane: 'Review', name: 'shea-agent-review', reads: 'PR diff, tests, review evidence', output: 'Human Review or Rework' },
+    { lane: 'Merge', name: 'shea-manual-merge', reads: 'Approved PR, freshness, CI', output: 'Done or merge-lane repair' }
   ];
 
   const boundaryCards = [

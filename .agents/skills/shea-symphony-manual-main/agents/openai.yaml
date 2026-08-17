@@ -1,4 +1,0 @@
-interface:
-  display_name: "Shea Symphony Manual Main"
-  short_description: "Execute one supervised Main issue end to end"
-  default_prompt: "Use $shea-symphony-manual-main to execute one operator-selected Todo or explicitly authorized Backlog issue in this task and stop at Agent Review."

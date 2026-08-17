@@ -12,10 +12,7 @@ use shea_symphony::lane_claim::{
 };
 use shea_symphony::model::TrackerIssue;
 use shea_symphony::progress::{run_with_progress_heartbeat, ProgressHeartbeatSpec};
-use shea_symphony::prompt::render_prompt;
-use shea_symphony::prompt_runtime::{
-    AUTOMATIC_HEADLESS_REVIEW_BOUNDARY, AUTOMATIC_HEADLESS_STRUCTURED_REVIEW_BOUNDARY,
-};
+use shea_symphony::prompt::{render_prompt, render_template_with_values};
 use shea_symphony::review::{
     gemini_review_health_diagnostic, persist_review_job_ledger_record,
     poll_review_job_until_terminal, render_repeated_review_failure_workpad,
@@ -922,11 +919,17 @@ pub(crate) fn render_automatic_review_prompt_for_backend(
         issue,
         None,
     )?;
-    prompt.push_str(if backend == "agy-cli" {
-        AUTOMATIC_HEADLESS_STRUCTURED_REVIEW_BOUNDARY
-    } else {
-        AUTOMATIC_HEADLESS_REVIEW_BOUNDARY
-    });
+    let fragment_key = match backend {
+        "agy-cli" | "codex-app-server" => "automatic_review_structured",
+        "claude-code" => "claude_code_review",
+        _ => "automatic_review",
+    };
+    let template = workflow
+        .backend_prompt(fragment_key)
+        .map_err(|error| shea_symphony::prompt::PromptError::Context(error.to_string()))?;
+    let boundary = render_template_with_values(template, &[])?;
+    prompt.push_str("\n\n");
+    prompt.push_str(&boundary);
     Ok(prompt)
 }
 

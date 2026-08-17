@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "core_group": "core",
+  "groups": {
+    "core": {
+      "optional": false,
+      "available": true,
+      "depends_on": [],
+      "resources": [
+        { "kind": "skill", "path": "../.agents/skills/shea-issue-forge" },
+        { "kind": "skill", "path": "../.agents/skills/shea-backlog" },
+        { "kind": "skill", "path": "../.agents/skills/shea-doctor" },
+        { "kind": "skill", "path": "../.agents/skills/shea-human-review" },
+        { "kind": "skill", "path": "../.agents/skills/shea-manual-main" },
+        { "kind": "skill", "path": "../.agents/skills/shea-agent-review" },
+        { "kind": "skill", "path": "../.agents/skills/shea-manual-merge" },
+        { "kind": "workflow", "path": "workflows/shea-symphony.md" },
+        { "kind": "contract", "path": "contracts/workflow-capability.v1.md" },
+        { "kind": "adapter", "path": "contracts/adapters/legacy-cli.v1.md" },
+        { "kind": "lane_prompt", "path": "prompts/main-agent.md" },
+        { "kind": "lane_prompt", "path": "prompts/review-agent.md" },
+        { "kind": "lane_prompt", "path": "prompts/merge-agent.md" },
+        { "kind": "backend_prompt", "path": "prompts/backend" },
+        { "kind": "template", "path": "template/workpad" },
+        { "kind": "template", "path": "template/evidence/agent-review-handoff.md" },
+        { "kind": "template", "path": "template/evidence/agent-review.md" },
+        { "kind": "template", "path": "template/evidence/doctor-triage.md" },
+        { "kind": "template", "path": "template/evidence/forge-rework-blocked.md" },
+        { "kind": "template", "path": "template/evidence/forge-rework-run.md" },
+        { "kind": "template", "path": "template/evidence/human-review-repair.md" },
+        { "kind": "template", "path": "template/evidence/lane-session.md" },
+        { "kind": "template", "path": "template/evidence/manual-review.md" },
+        { "kind": "template", "path": "template/evidence/merge-repair.md" },
+        { "kind": "template", "path": "template/evidence/merge-run.md" },
+        { "kind": "template", "path": "template/evidence/repeated-review-failure.md" },
+        { "kind": "template", "path": "template/evidence/review-freshness.md" },
+        { "kind": "template", "path": "template/evidence/review-invalid-handoff.md" },
+        { "kind": "template", "path": "template/evidence/rework-diagnostic.md" },
+        { "kind": "template", "path": "template/evidence/workspace-adoption.md" },
+        { "kind": "template", "path": "template/evidence/workspace-ensure.md" },
+        { "kind": "template", "path": "template/decision/human-review.md" },
+        { "kind": "documentation", "path": "../docs/prompt-template-contract.md" },
+        { "kind": "documentation", "path": "../docs/installable-resource-contract.md" },
+        { "kind": "documentation", "path": "../docs/template-consumer-audit.md" },
+        { "kind": "documentation", "path": "../docs/workflow-capability-contract.md" }
+      ]
+    },
+    "improve": {
+      "optional": true,
+      "available": true,
+      "depends_on": ["core"],
+      "resources": [
+        { "kind": "skill", "path": "../.agents/skills/shea-improve" }
+      ]
+    },
+    "halo_research": {
+      "optional": true,
+      "available": true,
+      "depends_on": ["core"],
+      "resources": [
+        { "kind": "skill", "path": "../.agents/skills/shea-halo-research-seed" }
+      ]
+    },
+    "parent_subissues": {
+      "optional": true,
+      "available": true,
+      "depends_on": ["core"],
+      "resources": [
+        { "kind": "template", "path": "template/evidence/parent-topology.md" },
+        { "kind": "report", "path": "template/report/parent-batch-readiness-report.md" },
+        { "kind": "documentation", "path": "../docs/parent-subissue-topology.md" }
+      ]
+    },
+    "shea_docs": {
+      "optional": true,
+      "available": false,
+      "depends_on": ["core"],
+      "resources": []
+    }
+  }
+}

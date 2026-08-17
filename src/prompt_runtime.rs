@@ -7,116 +7,49 @@ pub struct RuntimeEnvelopeSpec {
     pub id: &'static str,
     pub lane: &'static str,
     pub backend: &'static str,
-    pub path: &'static str,
+    pub source: &'static str,
     pub purpose: &'static str,
 }
 
-pub const ASSIGNED_LANE_CLAIM_ENVELOPE: RuntimeEnvelopeSpec = RuntimeEnvelopeSpec {
-    id: "assigned_lane_claim",
-    lane: "main,merge",
-    backend: "all",
-    path: "claim/render_prompt_with_claim",
-    purpose: "claim identity and run evidence",
-};
-
-pub const CODEX_APP_SERVER_HANDOFF_ENVELOPE: RuntimeEnvelopeSpec = RuntimeEnvelopeSpec {
-    id: "codex_app_server_handoff_boundary",
-    lane: "main",
-    backend: "codex app-server",
-    path: "main_loop/execution",
-    purpose: "app-server child-turn mutation boundary",
-};
-
-pub const AUTOMATIC_HEADLESS_REVIEW_ENVELOPE: RuntimeEnvelopeSpec = RuntimeEnvelopeSpec {
-    id: "automatic_headless_review_boundary",
-    lane: "review",
-    backend: "agy-cli",
-    path: "review/automatic",
-    purpose: "headless review safety and stdout protocol",
-};
-
-pub const MERGE_CONFLICT_REPAIR_TASK_ENVELOPE: RuntimeEnvelopeSpec = RuntimeEnvelopeSpec {
-    id: "merge_conflict_repair_task",
-    lane: "merge",
-    backend: "merge agent",
-    path: "merge/repair/agent_contract",
-    purpose: "merge repair scope and conflict context",
-};
-
-pub const MERGE_REQUIRED_OUTPUT_MARKER_ENVELOPE: RuntimeEnvelopeSpec = RuntimeEnvelopeSpec {
-    id: "merge_required_output_markers",
-    lane: "merge",
-    backend: "merge agent",
-    path: "merge/repair/agent_contract",
-    purpose: "required merge-agent routing markers",
-};
-
 pub const RUNTIME_ENVELOPES: &[RuntimeEnvelopeSpec] = &[
-    ASSIGNED_LANE_CLAIM_ENVELOPE,
-    CODEX_APP_SERVER_HANDOFF_ENVELOPE,
-    AUTOMATIC_HEADLESS_REVIEW_ENVELOPE,
-    MERGE_CONFLICT_REPAIR_TASK_ENVELOPE,
-    MERGE_REQUIRED_OUTPUT_MARKER_ENVELOPE,
+    RuntimeEnvelopeSpec {
+        id: "assigned_lane_claim",
+        lane: "main,merge",
+        backend: "all",
+        source: "code:claim/render_prompt_with_claim",
+        purpose: "typed claim identity and run evidence",
+    },
+    RuntimeEnvelopeSpec {
+        id: "codex_app_server_handoff_boundary",
+        lane: "main",
+        backend: "codex app-server",
+        source: "backend_prompts.codex_app_server",
+        purpose: "Markdown-owned app-server child-turn boundary",
+    },
+    RuntimeEnvelopeSpec {
+        id: "automatic_headless_review_boundary",
+        lane: "review",
+        backend: "configured review backend",
+        source: "backend_prompts.automatic_review[_structured]",
+        purpose: "Markdown-owned review behavior with code-owned protocol validation",
+    },
+    RuntimeEnvelopeSpec {
+        id: "claude_code_review_boundary",
+        lane: "review",
+        backend: "claude-code",
+        source: "backend_prompts.claude_code_review",
+        purpose: "Markdown-owned Claude behavior with code-owned JSON Schema",
+    },
+    RuntimeEnvelopeSpec {
+        id: "merge_conflict_repair_boundary",
+        lane: "merge",
+        backend: "merge agent",
+        source: "backend_prompts.merge_repair",
+        purpose: "Markdown behavior rendered with typed conflict facts",
+    },
 ];
 
 pub const CODEX_APP_SERVER_CONTINUE_PROMPT: &str = "Continue";
-
-pub const CODEX_APP_SERVER_HANDOFF_BOUNDARY: &str = "\n\n## Codex App-Server Runtime Boundary\n\n\
-This run is executing inside the Codex app-server backend. Treat the app-server \
-turn as the implementation and local-verification worker only. Do not run \
-GitHub Project reads or mutations, do not create or update pull requests, and \
-do not attempt final Project state transitions from inside this child turn. \
-Leave a concise terminal summary of changed files, verification commands, and \
-any blocker. The outer Shea Symphony CLI will commit eligible worktree changes, \
-publish or update the PR, write durable workpad evidence, verify linked PR \
-readback, and perform the final `Agent Review` handoff.\n";
-
-pub const AUTOMATIC_HEADLESS_REVIEW_BOUNDARY: &str =
-    "\n\n## Automatic Headless Review Boundary\n\n\
-This review backend process is running under Shea Symphony automatic `review loop` or `review once`.\n\
-Shea Symphony CLI has already claimed or will own any Review Agent claim, timeline comment write,\n\
-issue body update, and Project state transition outside this process.\n\n\
-Keep automatic review bounded: inspect the linked PR diff and explicitly named code paths before\n\
-broader local exploration. Do not recursively enumerate directory trees or perform a repository-wide\n\
-scan. If those focused sources cannot establish an independent conclusion, return `Review Result:\n\
-NEEDS_CONTEXT` with the missing evidence instead of continuing to explore.\n\n\
-Do not run mutating Shea Symphony or GitHub commands, including `review claim`, `review pass`,\n\
-`review reject`, `project set-state`, `project workpad`, `forge`, `gh issue edit`, `gh issue comment`, raw\n\
-Project GraphQL mutations, or Project UI changes. Do not activate or follow any manual review\n\
-skill that tells you to mutate Project state.\n\n\
-Return review evidence in stdout only. Start with exactly one line: `Review Result: PASS`,\n\
-`Review Result: REWORK`, or `Review Result: NEEDS_CONTEXT`. Use `PASS` only when there are no\n\
-blocking findings. Use `REWORK` only when confirmed implementation defects require Main Agent\n\
-changes. Use `NEEDS_CONTEXT` when missing evidence or ambiguity prevents an independent decision.\n\n\
-UAT is Human Review-owned unless this issue explicitly asks the Main Agent to implement a UAT\n\
-harness, fixture, rehearsal path, or workflow capability. Missing Human-owned UAT execution is\n\
-not a confirmed implementation defect and must not by itself produce `Review Result: REWORK`.\n\
-Report UAT readiness or Human Review follow-up separately under `Evidence`.\n\n\
-Only use `[Confirmed]`, `[Plausible]`, `[Rejected]`, or `[Needs Context]` for actual review\n\
-findings. Do not use those bracketed finding tags for positive verification evidence, checklist\n\
-items, or things that were implemented correctly; put positive observations under an `Evidence`\n\
-heading with plain bullets instead. Leave routing and evidence persistence to the Shea Symphony\n\
-wrapper after this process exits.\n";
-
-pub const AUTOMATIC_HEADLESS_STRUCTURED_REVIEW_BOUNDARY: &str =
-    "\n\n## Automatic Headless Structured Review Boundary\n\n\
-This review backend process is running under Shea Symphony automatic `review loop` or `review once`.\n\
-Shea Symphony CLI owns the Review Agent claim, tracker evidence, and Project state transition outside\n\
-this process. Do not mutate tracker state, the pull request, or the Review workspace.\n\n\
-Keep the review bounded to the linked PR diff and explicitly named code paths. Run verification\n\
-synchronously; do not create background tasks, request interactive approval, or leave commands\n\
-running. You are executing in a disposable isolated checkout at the exact linked PR revision; leave\n\
-its HEAD and tracked files unchanged. Inspect diffs directly through command stdout. If a tool must\n\
-materialize scratch output, write it only beneath `$SHEA_REVIEW_SCRATCH`, never in the checkout.\n\
-Build tools must use the wrapper-provided external cache paths such as `$CARGO_TARGET_DIR`. Resolve\n\
-the adapter's `CLI` placeholder through `.shea/app-profile.json`; it is not the current agy backend\n\
-executable. If focused evidence cannot establish a conclusion, classify the result as\n\
-`needs_context` instead of broadening exploration or bypassing the sandbox.\n\n\
-The wrapper supplied a native JSON Schema. Return only the schema-constrained object through the\n\
-native structured-result channel. Do not emit a legacy `Review Result:` marker or prose before or\n\
-after the object. Use `pass` only with no blocking findings, `rework` only with confirmed findings,\n\
-and `needs_context` only with Needs Context findings. Leave routing and evidence persistence to the\n\
-Shea Symphony wrapper after this process exits.\n";
 
 pub fn render_assigned_lane_claim_envelope(claim: &LaneClaim) -> String {
     format!(
@@ -140,31 +73,17 @@ pub struct MergeConflictRepairEnvelope<'a> {
     pub mechanical_stderr: &'a str,
 }
 
-pub fn render_merge_conflict_repair_task_envelope(
+pub fn merge_conflict_repair_values(
     input: MergeConflictRepairEnvelope<'_>,
-) -> String {
-    format!(
-        "\n\n## Merge-Agent Conflict Repair Task\n\n\
-You are repairing the existing approved PR branch in place. Preserve the intent that already passed Agent Review and Human Review. Resolve only conflicts caused by merging the target base into this PR branch. Do not create a replacement PR, do not switch workspaces, and do not route through Rework.\n\n\
-- Pull request: `{}`\n\
-- Head branch: `{}`\n\
-- Expected base: `{}`\n\
-- Conflict summary: {}\n\
-- Mechanical merge stderr: `{}`\n",
-        input.pr_ref,
-        input.head_ref_name,
-        input.expected_base,
-        input.conflict_summary,
-        single_line(input.mechanical_stderr)
-    )
+) -> Vec<(&'static str, String)> {
+    vec![
+        ("pr_ref", input.pr_ref.into()),
+        ("head_ref_name", input.head_ref_name.into()),
+        ("expected_base", input.expected_base.into()),
+        ("conflict_summary", input.conflict_summary.into()),
+        ("mechanical_stderr", single_line(input.mechanical_stderr)),
+    ]
 }
-
-pub const MERGE_REQUIRED_OUTPUT_MARKER_ENVELOPE_TEXT: &str =
-    "\n### Required Output Marker\n\n\
-End your final response with one of these exact markers:\n\
-- `MERGE_AGENT_DECISION: repaired` only if the resolution preserves reviewed intent and verification can proceed.\n\
-- `MERGE_AGENT_DECISION: needs_human_input` if there is semantic uncertainty, unrelated drift, unsafe branch/worktree state, or missing verification confidence.\n\n\
-Also include `RESOLUTION_SUMMARY:` and `SEMANTIC_SAFETY:` lines. Leave the merge resolution staged or ready for `git add -A`; the merge lane will commit, verify cleanliness, push, and keep the issue in `Merging` for the next tick.\n";
 
 fn single_line(value: &str) -> String {
     value.split_whitespace().collect::<Vec<_>>().join(" ")
@@ -175,102 +94,46 @@ mod tests {
     use super::*;
 
     #[test]
-    fn registry_names_current_cli_runtime_envelopes() {
-        let ids = RUNTIME_ENVELOPES
-            .iter()
-            .map(|envelope| envelope.id)
-            .collect::<Vec<_>>();
-
-        assert_eq!(
-            ids,
-            vec![
-                "assigned_lane_claim",
-                "codex_app_server_handoff_boundary",
-                "automatic_headless_review_boundary",
-                "merge_conflict_repair_task",
-                "merge_required_output_markers",
-            ]
-        );
+    fn registry_names_code_and_markdown_runtime_sources() {
+        assert_eq!(RUNTIME_ENVELOPES.len(), 5);
         assert!(RUNTIME_ENVELOPES
             .iter()
-            .all(|envelope| !envelope.path.trim().is_empty()));
+            .all(|envelope| !envelope.source.trim().is_empty()));
+        assert!(RUNTIME_ENVELOPES
+            .iter()
+            .filter(|envelope| envelope.id != "assigned_lane_claim")
+            .all(|envelope| envelope.source.starts_with("backend_prompts.")));
     }
 
     #[test]
-    fn automatic_review_envelope_bounds_exploration() {
-        assert!(AUTOMATIC_HEADLESS_REVIEW_BOUNDARY.contains("Keep automatic review bounded"));
-        assert!(AUTOMATIC_HEADLESS_REVIEW_BOUNDARY
-            .contains("Do not recursively enumerate directory trees"));
-        assert!(AUTOMATIC_HEADLESS_REVIEW_BOUNDARY.contains("Review Result:\nNEEDS_CONTEXT"));
-    }
-
-    #[test]
-    fn structured_review_envelope_uses_only_native_schema_protocol() {
-        assert!(AUTOMATIC_HEADLESS_STRUCTURED_REVIEW_BOUNDARY
-            .contains("Return only the schema-constrained object"));
-        assert!(AUTOMATIC_HEADLESS_STRUCTURED_REVIEW_BOUNDARY
-            .contains("do not create background tasks"));
-        assert!(
-            AUTOMATIC_HEADLESS_STRUCTURED_REVIEW_BOUNDARY.contains("disposable isolated checkout")
-        );
-        assert!(AUTOMATIC_HEADLESS_STRUCTURED_REVIEW_BOUNDARY.contains("$SHEA_REVIEW_SCRATCH"));
-        assert!(AUTOMATIC_HEADLESS_STRUCTURED_REVIEW_BOUNDARY.contains("$CARGO_TARGET_DIR"));
-        assert!(
-            AUTOMATIC_HEADLESS_STRUCTURED_REVIEW_BOUNDARY.contains("adapter's `CLI` placeholder")
-        );
-        assert!(AUTOMATIC_HEADLESS_STRUCTURED_REVIEW_BOUNDARY.contains(".shea/app-profile.json"));
-        assert!(AUTOMATIC_HEADLESS_STRUCTURED_REVIEW_BOUNDARY.contains("agy backend"));
-        assert!(
-            !AUTOMATIC_HEADLESS_STRUCTURED_REVIEW_BOUNDARY.contains("Start with exactly one line")
-        );
-    }
-
-    #[test]
-    fn merge_repair_envelope_preserves_required_protocol() {
-        let envelope = render_merge_conflict_repair_task_envelope(MergeConflictRepairEnvelope {
+    fn merge_repair_values_keep_dynamic_facts_typed_and_single_line() {
+        let values = merge_conflict_repair_values(MergeConflictRepairEnvelope {
             pr_ref: "#326",
             head_ref_name: "feature/issue-326",
             expected_base: "main",
             conflict_summary: "src/main.rs conflict",
             mechanical_stderr: "line one\nline two",
-        }) + MERGE_REQUIRED_OUTPUT_MARKER_ENVELOPE_TEXT;
-
-        assert!(envelope.contains("Merge-Agent Conflict Repair Task"));
-        assert!(envelope.contains("- Pull request: `#326`"));
-        assert!(envelope.contains("- Mechanical merge stderr: `line one line two`"));
-        assert!(envelope.contains("MERGE_AGENT_DECISION: repaired"));
-        assert!(envelope.contains("MERGE_AGENT_DECISION: needs_human_input"));
-        assert!(envelope.contains("RESOLUTION_SUMMARY:"));
-        assert!(envelope.contains("SEMANTIC_SAFETY:"));
+        });
+        assert!(values.contains(&("pr_ref", "#326".into())));
+        assert!(values.contains(&("mechanical_stderr", "line one line two".into())));
     }
 
     #[test]
-    fn runtime_boundary_headings_stay_in_registry_module() {
-        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        let mut offenders = Vec::new();
-        for path in [
-            src.join("lanes/claim.rs"),
-            src.join("lanes/main_loop/execution.rs"),
-            src.join("lanes/review/automatic.rs"),
-            src.join("lanes/merge/repair/agent_contract.rs"),
+    fn long_backend_behavior_is_not_embedded_in_rust() {
+        let source = include_str!("prompt_runtime.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap();
+        for heading in [
+            "Codex App-Server Runtime Boundary",
+            "Automatic Headless Review Boundary",
+            "Claude Code Structured Review Boundary",
+            "Merge-Agent Conflict Repair Boundary",
         ] {
-            let content = std::fs::read_to_string(&path).unwrap();
-            for heading in [
-                "## Assigned Lane Claim",
-                "## Codex App-Server Runtime Boundary",
-                "## Automatic Headless Review Boundary",
-                "## Merge-Agent Conflict Repair Task",
-                "### Required Output Marker",
-            ] {
-                if content.contains(heading) {
-                    offenders.push(format!("{} contains {heading}", path.display()));
-                }
-            }
+            assert!(
+                !source.contains(heading),
+                "embedded backend prose: {heading}"
+            );
         }
-
-        assert!(
-            offenders.is_empty(),
-            "runtime envelope text must live in prompt_runtime.rs: {offenders:?}"
-        );
     }
 }

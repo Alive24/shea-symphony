@@ -8,6 +8,8 @@ operator requested a read-only readiness audit.
 Use the pinned repository surfaces to check:
 
 - workflow and configuration parsing;
+- resolved resource-manifest schema, enabled groups, dependency closure, and
+  exact Markdown sources;
 - capability contract, adapter role, and compatibility resolution;
 - target repository and GitHub Project binding;
 - selected harness and project-local Skill visibility;
@@ -36,6 +38,7 @@ Return one setup report with:
 - target repository/root;
 - stable release tag and full immutable commit;
 - selected harnesses and vendored Skills;
+- resolved core and optional resource groups plus exact installed sources;
 - added, unchanged, kept-conflict, replaced, and manually merged paths;
 - runtime-profile identity and safe readiness summary;
 - external Project actions and readback;

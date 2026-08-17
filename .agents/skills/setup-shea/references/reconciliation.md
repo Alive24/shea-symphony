@@ -26,31 +26,6 @@ Fetch selected workflows, capability contracts, adapters, prompts, templates,
 and workpads from their canonical paths at the same full commit. Do not package
 copies under `setup-shea/assets` and do not invent a suite/resource manifest.
 
-## Retire Removed Skills
-
-Inventory every selected harness's project-local Skill root for the exact
-legacy directories `shea-symphony-issue-forge-dream` and
-`shea-symphony-issue-forge-reflect`. The current release does not install an
-alias, wrapper, or deprecated replacement for either name.
-
-Treat each legacy directory as operator-owned. Before proposing removal:
-
-- enumerate every contained path, file type, byte size, and digest;
-- use Git's tracked preimage when available to identify local modifications;
-- show a focused diff for modified tracked text and the complete current text
-  for bounded untracked or otherwise customized text files;
-- stop for an operator decision on unreadable, binary, unexpectedly large,
-  symlinked, nested-repository, or path-escaping content; and
-- state whether Git or a separately confirmed export makes the bytes
-  recoverable.
-
-Classify an exact directory tree as `remove_legacy` only after its visible
-content and preimage tree digest are in the plan. Deletion requires explicit
-confirmation bound to that directory and digest. Re-read the complete preimage
-immediately before removal, stop on drift, delete no parent or sibling path,
-and verify the exact legacy directory is absent afterward. A declined removal
-leaves the legacy directory in place and reports setup as not fully reconciled.
-
 Classify each target path:
 
 - `add`: target path is absent;
@@ -79,11 +54,6 @@ external effects. Separate confirmations when one choice is independent or
 high impact. Re-stage and re-confirm if the source identity, target bytes,
 selected paths, diff, or external plan changes.
 
-Existing customized `shea-symphony-backlog` and `shea-symphony-improve` files
-follow the normal conflict rules. Never replace their Skill or reference text
-merely because the stable release is newer or because a legacy Skill is being
-removed in the same setup run.
-
 ## Apply And Read Back
 
 Apply only confirmed effects. Before each write, prove the target bytes still
@@ -94,7 +64,3 @@ Re-read every written path and compare it with the confirmed bytes. Re-run the
 standard Skills CLI listing for selected project-local Skills and targeted
 reads for external Project changes. Report partial application precisely and
 leave unrelated operator-owned bytes unchanged.
-
-For confirmed legacy removal, verify only the two exact directories are absent
-and that every kept or conflicting Backlog/Improve customization is byte-for-
-byte unchanged.

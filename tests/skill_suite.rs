@@ -187,7 +187,6 @@ fn setup_shea_is_a_modular_immutable_release_workflow() {
         "conflict_keep",
         "upstream-hash registry",
         "planned preimage",
-        "remove_legacy",
     ] {
         assert!(
             reconciliation.contains(marker),
@@ -232,8 +231,6 @@ fn setup_shea_fixtures_cover_initial_repeat_conflict_failure_and_pin_cases() {
             "immutable-release.md",
             &["one tag", "one full commit", "containing `main`"][..],
         ),
-        ("legacy-skill-removal.md", &["`remove_legacy`"][..]),
-        ("customized-new-skill.md", &["`conflict_keep`"][..]),
     ];
 
     for (name, markers) in cases {

@@ -73,7 +73,7 @@ Current 2606 lane code implements these transitions through legacy tracker adapt
 
 ## Known policy drift
 
-`src/doctor/project_state.rs` still suggests moving a dirty/not-clean merging PR to Rework, while newer merge guidance keeps safe repair in `Merging` and sends unresolved semantic/unsafe blockers to NHI (`.shea/prompts/merge-agent.md`, `docs/operator-dogfood.md`). #390 is Done and established that newer merge-agent policy; it is not an active repair Issue. **Tracking:** any retained 2606 Doctor repair is an unowned gap or removable under T2607-08, for which no Issue is promoted. Surface the conflict when touching Doctor diagnostics; do not silently pick one policy.
+`src/doctor/project_state.rs` still suggests moving a dirty/not-clean merging PR to Rework, while newer merge guidance keeps safe repair in `Merging` and sends unresolved semantic/unsafe blockers to NHI (`.shea/prompts/merge-agent.md`, `.agents/skills/shea-manual-merge/SKILL.md`). #390 is Done and established that newer merge-agent policy; it is not an active repair Issue. **Tracking:** any retained 2606 Doctor repair is an unowned gap or removable under T2607-08, for which no Issue is promoted. Surface the conflict when touching Doctor diagnostics; do not silently pick one policy.
 
 ## Change guidance
 

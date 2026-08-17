@@ -1,6 +1,6 @@
 # T2607-03 Workflow Coordinator
 
-Status: Draft
+Design Status: Draft
 
 ## Purpose
 

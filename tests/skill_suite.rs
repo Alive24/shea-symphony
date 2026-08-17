@@ -439,6 +439,7 @@ fn walk_files(root: &Path) -> Vec<PathBuf> {
 fn doctor_skill_keeps_repairs_bounded_without_upstream_parity_management() {
     let doctor = skill_file("shea-doctor", "SKILL.md");
     let reference = skill_file("shea-doctor", "references/repository-contract-repair.md");
+    let operational = skill_file("shea-doctor", "references/operational-triage.md");
     let metadata = skill_file("shea-doctor", "agents/openai.yaml");
 
     for marker in [
@@ -454,7 +455,7 @@ fn doctor_skill_keeps_repairs_bounded_without_upstream_parity_management() {
         "runtime envelopes and tracker mutation mechanics are not editable contracts",
         "Repository-contract repair itself must not change Project status",
         "Vendored repository skills are owned by that repository",
-        "Do not compare them\n  with upstream text or versions",
+        "Do not compare them\nwith upstream text or versions",
     ] {
         assert!(doctor.contains(marker), "Doctor skill missing {marker}");
     }
@@ -462,6 +463,20 @@ fn doctor_skill_keeps_repairs_bounded_without_upstream_parity_management() {
     assert!(!doctor.contains("source/rendered-copy synchronization"));
     assert!(reference.contains("## Shea Symphony Contract Repair Plan"));
     assert!(reference.contains("## Shea Symphony Doctor Contract Repair"));
+    assert!(reference.contains("Prompt length or duplication alone is not a failure"));
+    assert!(reference.contains("a ready linked PR, workpad evidence, and Agent Review"));
+    for marker in [
+        "missing_pr_linkage",
+        "stale_lane_claim",
+        "dirty_runtime_or_worktree",
+        "operator_confirmation_needed",
+        "Doctor never moves an issue to Human Review",
+    ] {
+        assert!(
+            operational.contains(marker),
+            "Doctor triage reference missing {marker}"
+        );
+    }
     assert!(metadata.contains("$shea-doctor"));
 }
 
@@ -597,24 +612,20 @@ fn human_review_contract_and_templates_support_operator_owned_decisions() {
 }
 
 #[test]
-fn autoloop_dogfood_docs_and_lane_skills_prefer_the_foreground_loop() {
-    let command_reference = repo_file("docs/cli-command-reference.md");
-    let operator_dogfood = repo_file("docs/operator-dogfood.md");
-    let supervised_runbook = repo_file("docs/supervised-live-dogfood.md");
+fn agent_context_router_defers_operations_to_skills_and_contracts() {
+    let context_router = repo_file("docs/README.md");
+    let capability = repo_file(".shea/contracts/workflow-capability.v1.md");
     let manual_review = skill_file("shea-agent-review", "SKILL.md");
     let manual_merge = skill_file("shea-manual-merge", "SKILL.md");
 
-    for document in [
-        &command_reference,
-        &operator_dogfood,
-        &supervised_runbook,
-        &manual_review,
-        &manual_merge,
-    ] {
-        assert!(document.contains("autopilot plan"));
-        assert!(document.contains("autopilot loop"));
+    assert!(context_router.contains("Operational procedures belong in layered Skills"));
+    assert!(context_router.contains("should not scan\nall of `docs/`"));
+    assert!(context_router.contains("`openwiki/` is derived public synthesis"));
+    assert!(capability.contains("## Mutation Protocol"));
+
+    for skill in [&manual_review, &manual_merge] {
+        assert!(skill.contains("autopilot plan"));
+        assert!(skill.contains("autopilot loop"));
+        assert!(skill.contains(".shea/contracts/workflow-capability.v1.md"));
     }
-    assert!(command_reference.contains("not a daemon"));
-    assert!(operator_dogfood.contains("one operator-controlled supervisor over independent"));
-    assert!(supervised_runbook.contains("not a daemon"));
 }

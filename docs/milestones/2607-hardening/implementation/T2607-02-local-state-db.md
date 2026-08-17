@@ -1,8 +1,8 @@
 # T2607-02 Local State DB
 
-Status: Migration v1, Describe-backed lifecycle projection, LocalStateAdmin
-health/explicit migration, and active-only workflow-index reads implemented;
-broader query, recovery, and integration slices deferred
+Design Status: Draft
+
+Implementation progress is tracked in `../STATUS.md`.
 
 ## Purpose
 

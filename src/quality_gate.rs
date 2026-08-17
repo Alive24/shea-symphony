@@ -1068,10 +1068,10 @@ mod tests {
         std::fs::create_dir_all(temp.path().join("src")).unwrap();
         std::fs::write(temp.path().join("src/main.rs"), "").unwrap();
         std::fs::create_dir_all(temp.path().join("docs")).unwrap();
-        std::fs::write(temp.path().join("docs/dogfood-readiness.md"), "").unwrap();
+        std::fs::write(temp.path().join("docs/README.md"), "").unwrap();
         let body = aligned_body(
             "Alive24/shea-symphony",
-            &["docs/dogfood-readiness.md"],
+            &["docs/README.md"],
             &["src/main.rs"],
             &["cargo test", "cargo fmt --check"],
         );

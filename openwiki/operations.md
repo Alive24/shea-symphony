@@ -58,7 +58,7 @@ The Tauri app calls legacy CLI JSON/read surfaces for most dashboard data and co
 
 ## Protected 2606 operations
 
-For supervised lane operation against canonical main, use the active protected-2606-built vendored runtime and follow `docs/operator-dogfood.md` rather than reconstructing commands here. Keep its three roles distinct: active bootstrap, protected recovery baseline, and behavior/test/evidence acceptance oracle. Its safety pattern is:
+For supervised compatibility-lane operation against canonical main, use the active protected-2606-built vendored runtime through the selected repository Skill and Workflow Capability adapter rather than reconstructing commands here. Keep its roles limited to internal compatibility, protected recovery, and behavior/test/evidence acceptance. Its safety pattern is:
 
 1. run read-only status/Doctor/project inspection;
 2. preview plans or dry-runs;

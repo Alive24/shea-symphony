@@ -159,8 +159,8 @@ orchestration, and coverage at the new typed boundary.
 - `design/context/local-code/shea-symphony/files/docs/bootstrap/references/openai-symphony/SPEC.md`
 - `docs/bootstrap/SHEA_SYMPHONY_SPEC.md`
 - `docs/codex-app-server-transport.md`
-- `docs/dogfood-readiness.md`
-- `docs/main-orchestration-spine.md`
+- `docs/README.md`
+- `docs/legacy-runtime-distribution.md`
 - `AGENT-ACTIVITY-CONTRACT.md`
 - `CHILD-WORKFLOW-POLICY.md`
 - `IMPLEMENTATION-BACKLOG.md`
@@ -195,6 +195,14 @@ orchestration, and coverage at the new typed boundary.
 - `docs/milestones/2607-hardening/adr/0007-local-state-db-read-model.md`
 - `docs/milestones/2608-workflow-graph-extension/README.md`
 - `docs/legacy-runtime-distribution.md`
+
+## Progress Snapshot
+
+GitHub Project #9 owns live execution state. `STATUS.md` is a dated, derived
+snapshot for coding agents that need milestone context without reconstructing
+it from historical documents. Reconcile the snapshot from the Project and
+accepted implementation evidence; do not treat package or ADR status as live
+delivery status.
 
 ## Open Questions
 

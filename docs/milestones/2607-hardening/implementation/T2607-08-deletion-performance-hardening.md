@@ -1,6 +1,6 @@
 # T2607-08 Deletion And Performance Hardening
 
-Status: Draft
+Design Status: Draft
 
 ## Purpose
 

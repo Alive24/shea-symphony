@@ -323,16 +323,9 @@ fn structural_validation_rejects_missing_refs_duplicated_ownership_and_runbooks(
 }
 
 #[test]
-fn documentation_keeps_workflow_profile_adapter_and_skill_ownership_separate() {
-    let docs = repo_file("docs/workflow-capability-contract.md");
-    for owner in [
-        "Workflow configuration owns",
-        "Machine-local profiles own",
-        "Workflow Capability contract owns",
-        "Adapters own",
-        "Skills own",
-    ] {
-        assert!(docs.contains(owner), "missing ownership boundary: {owner}");
-    }
-    assert!(docs.contains("not a second workflow file"));
+fn context_router_points_agents_to_the_authoritative_capability_contract() {
+    let docs = repo_file("docs/README.md");
+    assert!(docs.contains("`.shea/contracts/`, repository Skills, prompts, and templates"));
+    assert!(docs.contains("`.shea/contracts/workflow-capability.v1.md`"));
+    assert!(docs.contains("Do not maintain a second Markdown runbook"));
 }

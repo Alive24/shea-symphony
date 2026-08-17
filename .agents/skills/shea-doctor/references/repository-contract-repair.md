@@ -12,7 +12,7 @@ the exact displayed paths and diff.
 - Target repository: `<owner/repo and root>`
 - Workflow: `<resolved path>`
 - Affected lane/model/harness: `<known value>` | `unknown`
-- Result: `proposal` | `no_change` | `refused_unsafe` | `blocked`
+- Result: `proposal` | `no_change` | `refused_unsafe` | `confirmation_needed` | `blocked`
 
 ### Observed evidence
 
@@ -99,6 +99,12 @@ the Main Agent Workpad and do not mutate Project status.
    claim, verification, PR, review, or state-transition rule.
 5. Treat model or harness behavior as affected only when evidence identifies
    it. Do not turn one run into a universal model preference.
-6. Stop if approved-path bytes change between preview and application.
-7. After application, fail closed if any changed path falls outside the
+6. Prompt length or duplication alone is not a failure. Name the observed
+   behavior or consumer affected before proposing a repair.
+7. When repairing a Main contract, preserve the completion boundary: repairable
+   in-scope verification failures are fixed and rerun, and completion waits for
+   required verification, a ready linked PR, workpad evidence, and Agent Review
+   handoff.
+8. Stop if approved-path bytes change between preview and application.
+9. After application, fail closed if any changed path falls outside the
    confirmed set or any unrelated target customization changes.

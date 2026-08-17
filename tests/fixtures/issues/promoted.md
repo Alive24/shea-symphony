@@ -41,8 +41,8 @@ The Backlog seed is non-dispatchable until an operator confirms promotion and su
 
 ### Relevant Knowledge Sources
 
-- docs/cli-command-reference.md
-- docs/operator-dogfood.md
+- docs/README.md
+- .shea/contracts/workflow-capability.v1.md
 
 ### Relevant Code Paths
 

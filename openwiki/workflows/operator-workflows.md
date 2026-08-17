@@ -7,7 +7,7 @@ tags: ["operations", "doctor", "human-review", "recovery", "lanes"]
 
 # Operator workflows, Doctor, and human handoffs
 
-This page maps operator intent to canonical source material; it does not replace the detailed runbooks. The [lifecycle model](../domain/lifecycle.md) defines routing, while [authority and state](../architecture/authority-and-state.md) defines which evidence may authorize action.
+This page maps operator intent to canonical source material; it does not replace the repository Skills and capability contracts. The [lifecycle model](../domain/lifecycle.md) defines routing, while [authority and state](../architecture/authority-and-state.md) defines which evidence may authorize action.
 
 ## Normal 2606 lane workflow
 
@@ -19,7 +19,7 @@ The mature operational flow is currently executed by the [protected 2606 bootstr
 4. **Human Review.** Brief the operator on evidence and remaining UAT. No approval, rejection, routing, merge, or tracker mutation occurs before explicit operator approval.
 5. **Merge.** `merge once` and `merge loop` land clean approved work through direct deterministic CLI logic; they do not require Codex or another agent session. The CLI first handles safe mechanical drift within merge authority, uses the configured merge-agent backend only for explicit diagnosis or bounded content-conflict repair, and escalates semantic uncertainty or unsafe state to NHI.
 
-Canonical detail: `README.md`, `docs/main-orchestration-spine.md`, `docs/operator-dogfood.md`, and lane prompts under `.shea/prompts/`.
+Canonical detail: `docs/README.md`, `.shea/contracts/workflow-capability.v1.md`, the selected repository Skill, and lane prompts under `.shea/prompts/`.
 
 ```mermaid
 sequenceDiagram
@@ -55,7 +55,7 @@ Recent history made these prompts file-defined so operator wording is versioned 
 Doctor has two related surfaces:
 
 - The deterministic 2606 `doctor` command hydrates tracker evidence, runtime/session state, workspaces/topology, and canonical checkout; it supports human, JSON, TUI, strict, and limited write paths (`src/commands/doctor.rs`).
-- Doctor v1 is a repo-owned operator workflow (`docs/operator-doctor.md`, **Status: Doctor v1**) that is read-first, evidence-preserving, and confirmation-gated.
+- `shea-doctor` is a repo-owned operator workflow (`.agents/skills/shea-doctor/SKILL.md`) that is read-first, evidence-preserving, and confirmation-gated.
 
 Use Doctor for NHI, missing PR linkage, draft handoff, stale claim, dirty runtime/worktree, concrete repository-local Skill loading failures, or other stuck-state diagnosis. A safe run:
 
@@ -70,7 +70,7 @@ Implemented deterministic repair is narrower than the operator spec: invalid Hum
 
 ## Interrupted 2606 recovery
 
-The canonical recovery runbook is `docs/operator-dogfood.md`:
+Recovery is owned by the selected lane Skill and the shared Workflow Capability contract:
 
 - inspect `status` and Doctor before clearing or retrying anything;
 - use bounded foreground Autoloop for normal all-lane recovery;

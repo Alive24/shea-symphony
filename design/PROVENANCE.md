@@ -1,35 +1,21 @@
 # Provenance Notes
 
-## Intake Commands
+## Current Evidence
 
-The project source context required bounded repository and local-code intake before final design-system authoring.
+The design system is grounded in current repository sources rather than checked-in repository snapshots:
 
-GitHub evidence was collected with:
+- `../README.md` for the public product and runtime boundary.
+- `../docs/README.md` for coding-agent context authority.
+- `../app/README.md` for the App/runtime boundary.
+- `../app/src/app.css` and `../app/src/lib/LaneCard.svelte` for live UI evidence.
+- `../docs/milestones/2607-hardening/README.md` for the current runtime transition.
 
-```sh
-"$OD_NODE_BIN" "$OD_BIN" tools connectors github-design-context --repo 'https://github.com/Alive24/shea-symphony' --output context/github/Alive24-shea-symphony.md
-```
-
-Result: `Read method: git-clone`, with snapshots under `context/github/Alive24-shea-symphony/files/`.
-
-Local code evidence was collected with:
-
-```sh
-"$OD_NODE_BIN" "$OD_BIN" tools connectors local-design-context --path '/Volumes/Bohemialive/GitHub/shea-symphony' --output context/local-code/shea-symphony.md
-```
-
-Result: `Read method: local-folder`, with snapshots under `context/local-code/shea-symphony/files/`.
+When design work needs additional repository or external evidence, capture it ephemerally for that task and cite the authoritative source. Do not commit a copied repository tree as standing context: it becomes stale, pollutes search, and competes with live sources.
 
 ## Preserved Assets
 
-- `build/favicon.svg` was copied byte-for-byte from `context/local-code/shea-symphony/files/web/build/favicon.svg`.
-- `assets/favicon.svg` is a convenience alias of the same source asset.
-
-## Source Examples
-
-- `source_examples/web/.svelte-kit/output/server/chunks/LaneCard.js` preserves the captured compiled LaneCard implementation.
-- `source_examples/web/.svelte-kit/output/server/entries/pages/_layout.js` preserves the captured SvelteKit layout entry.
+- `build/favicon.svg` and `assets/favicon.svg` are retained design-package copies of the runtime asset at `../app/static/favicon.svg`.
 
 ## Design Decisions
 
-The generated system prefers the live cockpit CSS in `app/src/app.css` over the earlier setup note's green/cream starting language because it is concrete implementation evidence. The preserved favicon still carries the green/cream runtime asset lineage, and the token file exposes those tones as supporting asset colors rather than primary app chrome.
+The generated system prefers the live cockpit CSS in `../app/src/app.css` because it is concrete implementation evidence. The preserved favicon carries the runtime asset lineage, and the token file exposes its tones as supporting asset colors rather than primary app chrome.

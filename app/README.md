@@ -90,7 +90,3 @@ The runnable UI intentionally keeps only:
 
 - `Human Todo`
 - `Lane Board`
-
-## Handoff Files
-
-The OpenDesign reference notes and screenshot are preserved in `handoff/`.

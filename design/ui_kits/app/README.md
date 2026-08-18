@@ -20,11 +20,11 @@ This kit is a runnable applied interface example for Shea Symphony product work.
 
 ## Design Notes
 
-The kit follows the captured Svelte cockpit CSS from `app/src/app.css` while applying the current review direction: primary navigation is a sticky top navbar, runtime posture sits in compact pills, the page topbar only carries readiness, and the Operator Desk keeps 8px cards, lane metrics, raised evidence panels, and responsive collapses at 1220px and 880px. Lane navigation uses compact actions so worker summaries stay scannable; reserve full-size filled buttons for primary human decisions. Daylight is the default review mode and uses Starbucks Green for brand signal, Green Accent for primary actions, and Neutral Warm/Ceramic surfaces. Set the root document to `data-theme="night"` to inspect the House Green cockpit mode.
+The kit follows the live Svelte cockpit CSS from `app/src/app.css` while applying the current review direction: primary navigation is a sticky top navbar, runtime posture sits in compact pills, the page topbar only carries readiness, and the Operator Desk keeps 8px cards, lane metrics, raised evidence panels, and responsive collapses at 1220px and 880px. Lane navigation uses compact actions so worker summaries stay scannable; reserve full-size filled buttons for primary human decisions. Daylight is the default review mode and uses Starbucks Green for brand signal, Green Accent for primary actions, and Neutral Warm/Ceramic surfaces. Set the root document to `data-theme="night"` to inspect the House Green cockpit mode.
 
 ## Source Basis
 
-- Product overview and surfaces: `context/local-code/shea-symphony.md`.
-- Live app tokens and component CSS: `app/src/app.css`.
-- Source LaneCard implementation: `source_examples/web/.svelte-kit/output/server/chunks/LaneCard.js`.
+- Product overview and surfaces: `../../../README.md` and `../../../docs/README.md`.
+- Live app tokens and component CSS: `../../../app/src/app.css`.
+- Source LaneCard implementation: `../../../app/src/lib/LaneCard.svelte`.
 - Preserved runtime favicon: `../../build/favicon.svg`.

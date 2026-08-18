@@ -18,6 +18,10 @@ resources. Release lookup is read-only.
 5. Do not query "latest" again unless the operator abandons the current plan
    and explicitly starts a new setup run.
 
+Require the resolved Release to expose the complete stable App asset set. Use
+[app-runtime.md](app-runtime.md) for native package and embedded-runtime
+selection; repository resources still come only from the peeled commit below.
+
 The release tag is human-readable evidence; the commit is the fetch boundary.
 Use commit-pinned GitHub content/raw-content URLs or a verified detached Git
 checkout for every subsequent resource. Never substitute a tag or branch after

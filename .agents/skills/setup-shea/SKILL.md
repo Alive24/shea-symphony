@@ -29,17 +29,20 @@ existing differing file without an explicit operator decision.
 2. Read [immutable-release.md](references/immutable-release.md) and resolve the
    latest stable Shea release once to both its tag and full commit before
    planning any remote resource.
-3. Read [resource-manifest.md](references/resource-manifest.md) to load the
+3. Read [app-runtime.md](references/app-runtime.md) to select, verify, and
+   reuse or confirmation-gate installation of the matching Shea App before
+   runtime-dependent readiness.
+4. Read [resource-manifest.md](references/resource-manifest.md) to load the
    versioned source manifest, select the complete core group, and resolve any
    explicitly requested optional extension closure.
-4. Read [workflow-project.md](references/workflow-project.md) when binding a
+5. Read [workflow-project.md](references/workflow-project.md) when binding a
    workflow, capability adapter, App profile, or GitHub Project.
-5. Read [reconciliation.md](references/reconciliation.md) to plan selected
+6. Read [reconciliation.md](references/reconciliation.md) to plan selected
    Skills and repository-owned Markdown, classify additions/unchanged files/
    conflicts, confirm exact effects, and apply safe writes.
-6. Read [runtime-profile.md](references/runtime-profile.md) when runtime
+7. Read [runtime-profile.md](references/runtime-profile.md) when runtime
    requirements are missing, stale, drifted, or explicitly requested.
-7. Read [readiness.md](references/readiness.md) for readback, verification, and
+8. Read [readiness.md](references/readiness.md) for readback, verification, and
    the final no-claim readiness report.
 
 ## Source and Ownership Invariants

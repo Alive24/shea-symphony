@@ -245,6 +245,7 @@ fn setup_shea_is_a_modular_immutable_release_workflow() {
     let skill = skill_file("setup-shea", "SKILL.md");
     let discovery = skill_file("setup-shea", "references/target-discovery.md");
     let release = skill_file("setup-shea", "references/immutable-release.md");
+    let app_runtime = skill_file("setup-shea", "references/app-runtime.md");
     let resources = skill_file("setup-shea", "references/resource-manifest.md");
     let workflow = skill_file("setup-shea", "references/workflow-project.md");
     let reconciliation = skill_file("setup-shea", "references/reconciliation.md");
@@ -258,6 +259,7 @@ fn setup_shea_is_a_modular_immutable_release_workflow() {
     for reference in [
         "target-discovery.md",
         "immutable-release.md",
+        "app-runtime.md",
         "resource-manifest.md",
         "workflow-project.md",
         "reconciliation.md",
@@ -320,6 +322,22 @@ fn setup_shea_is_a_modular_immutable_release_workflow() {
     assert!(resources.contains("`setup-shea` is global"));
     assert!(resources.contains("exact staged files"));
     assert!(readiness.contains("launched no Main, Review, or Merge agent"));
+    for marker in [
+        "release-manifest.json",
+        "GitHub asset's `digest`",
+        "aarch64-apple-darwin",
+        "x86_64-pc-windows-msvc",
+        "wrong_platform",
+        "tampered",
+        "without `/S`",
+        "Do not remove quarantine metadata",
+        "repeat every",
+    ] {
+        assert!(
+            app_runtime.contains(marker),
+            "App runtime contract missing {marker}"
+        );
+    }
     assert!(!repo_path(".agents/skills/setup-shea/assets").exists());
     assert!(!repo_path(".agents/skills/setup-shea/scripts").exists());
     assert!(!repo_path(".agents/skills/shea-symphony-runtime-onboarding/SKILL.md").exists());
@@ -355,6 +373,27 @@ fn setup_shea_fixtures_cover_initial_repeat_conflict_failure_and_pin_cases() {
         for marker in markers {
             assert!(source.contains(marker), "{name} missing {marker}");
         }
+    }
+}
+
+#[test]
+fn setup_shea_app_runtime_fixture_covers_install_reuse_and_failure_cases() {
+    let fixture = skill_file("setup-shea", "fixtures/app-runtime-matrix.md");
+    for marker in [
+        "compatible installed App",
+        "`missing`",
+        "`stale`",
+        "`wrong_platform`",
+        "`tampered`",
+        "`declined`",
+        "`repeated`",
+        "without `/S`",
+        "no-claim readiness",
+    ] {
+        assert!(
+            fixture.contains(marker),
+            "App runtime fixture missing {marker}"
+        );
     }
 }
 

@@ -7,7 +7,7 @@
     "dev": "vite --host 127.0.0.1",
     "dev:tauri": "vite --host 127.0.0.1 --port 1420 --strictPort",
     "build": "vite build",
-    "bundle:legacy": "../scripts/stage-legacy-sidecar.sh && SHEA_SYMPHONY_REQUIRE_LEGACY_SIDECAR=1 tauri build --bundles app",
+    "bundle:legacy": "../scripts/stage-legacy-sidecar.sh && SHEA_SYMPHONY_REQUIRE_LEGACY_SIDECAR=1 tauri build --bundles app -- --locked",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "preview": "vite preview --host 127.0.0.1",
     "tauri": "tauri",

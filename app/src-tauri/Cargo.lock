@@ -4299,6 +4299,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "signal-hook",
+ "tempfile",
  "temporalio-client",
  "temporalio-common",
  "temporalio-macros",

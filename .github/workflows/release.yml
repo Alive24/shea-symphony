@@ -1,0 +1,349 @@
+name: Publish stable Shea App release
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/release.yml
+      - Cargo.lock
+      - Cargo.toml
+      - build.rs
+      - src/legacy.rs
+      - src/runtime_identity.rs
+      - scripts/release/**
+      - scripts/stage-legacy-sidecar.sh
+      - app/**
+      - docs/releases/**
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Stable semantic version matching every repository package (for example v0.1.0)
+        required: true
+        default: v0.1.0
+        type: string
+
+concurrency:
+  group: stable-app-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.identity.outputs.tag }}
+      revision: ${{ steps.identity.outputs.revision }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Verify immutable main release identity
+        id: identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_REVISION: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+              echo "Stable releases must be dispatched from main; received $GITHUB_REF" >&2
+              exit 1
+            fi
+            git fetch --no-tags origin main
+            if [[ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]]; then
+              echo "Release checkout is not the current origin/main commit" >&2
+              exit 1
+            fi
+          else
+            RELEASE_TAG="v$(node -p "require('./app/package.json').version")"
+          fi
+          node scripts/release/verify-release.mjs preflight \
+            --root "$GITHUB_WORKSPACE" \
+            --tag "$RELEASE_TAG" \
+            --revision "$RELEASE_REVISION"
+
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            set +e
+            git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG" >/dev/null 2>&1
+            tag_status=$?
+            set -e
+            if [[ $tag_status -eq 0 ]]; then
+              echo "Release tag already exists: $RELEASE_TAG" >&2
+              exit 1
+            elif [[ $tag_status -ne 2 ]]; then
+              echo "Could not prove release tag absence" >&2
+              exit 1
+            fi
+
+            set +e
+            gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
+              >/tmp/shea-existing-release.json 2>/tmp/shea-existing-release-error.txt
+            release_status=$?
+            set -e
+            if [[ $release_status -eq 0 ]]; then
+              echo "Release already exists: $RELEASE_TAG" >&2
+              exit 1
+            elif ! grep -q "HTTP 404" /tmp/shea-existing-release-error.txt; then
+              cat /tmp/shea-existing-release-error.txt >&2
+              echo "Could not prove release absence" >&2
+              exit 1
+            fi
+          fi
+
+          notes="docs/releases/$RELEASE_TAG.md"
+          if [[ ! -s "$notes" ]]; then
+            echo "Missing release notes: $notes" >&2
+            exit 1
+          fi
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "revision=$RELEASE_REVISION" >> "$GITHUB_OUTPUT"
+
+  macos-arm64:
+    needs: preflight
+    runs-on: macos-15
+    env:
+      RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+      RELEASE_REVISION: ${{ needs.preflight.outputs.revision }}
+      RELEASE_TARGET: aarch64-apple-darwin
+      SHEA_SOURCE_REVISION: ${{ needs.preflight.outputs.revision }}
+      SHEA_LEGACY_SIDECAR_TARGET: aarch64-apple-darwin
+      SHEA_SYMPHONY_REQUIRE_LEGACY_SIDECAR: "1"
+      APPLE_SIGNING_IDENTITY: "-"
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.revision }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Prepare native toolchains
+        run: |
+          rustup target add "$RELEASE_TARGET"
+          npm ci --prefix app
+
+      - name: Verify and stage the matching Legacy runtime
+        run: |
+          cargo test --locked --test runtime_identity
+          bash scripts/stage-legacy-sidecar.sh
+
+      - name: Build the Apple Silicon App bundle
+        working-directory: app
+        run: npm run tauri -- build --bundles app --target "$RELEASE_TARGET" -- --locked
+
+      - name: Inspect and archive the native App
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_count=$(find app/src-tauri/target -type d -path '*/bundle/macos/*.app' -print | wc -l | tr -d ' ')
+          if [[ "$app_count" != "1" ]]; then
+            echo "Expected one macOS App bundle, found $app_count" >&2
+            exit 1
+          fi
+          app_bundle=$(find app/src-tauri/target -type d -path '*/bundle/macos/*.app' -print -quit)
+          embedded_runtime="$app_bundle/Contents/MacOS/shea-symphony-legacy"
+          if [[ ! -x "$embedded_runtime" ]]; then
+            echo "App bundle is missing its Legacy runtime: $embedded_runtime" >&2
+            exit 1
+          fi
+          codesign --verify --deep --strict "$app_bundle"
+          mkdir -p release-build
+          asset="release-build/Shea-Symphony-App-$RELEASE_TAG-macos-arm64.zip"
+          ditto -c -k --sequesterRsrc --keepParent "$app_bundle" "$asset"
+          node scripts/release/verify-release.mjs build \
+            --root "$GITHUB_WORKSPACE" \
+            --tag "$RELEASE_TAG" \
+            --revision "$RELEASE_REVISION" \
+            --target "$RELEASE_TARGET" \
+            --runtime "$embedded_runtime" \
+            --asset "$asset" \
+            --metadata release-build/macos-arm64.release.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-macos-arm64
+          path: release-build/
+          if-no-files-found: error
+          retention-days: 7
+
+  windows-x64:
+    needs: preflight
+    runs-on: windows-2025
+    env:
+      RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+      RELEASE_REVISION: ${{ needs.preflight.outputs.revision }}
+      RELEASE_TARGET: x86_64-pc-windows-msvc
+      SHEA_SOURCE_REVISION: ${{ needs.preflight.outputs.revision }}
+      SHEA_LEGACY_SIDECAR_TARGET: x86_64-pc-windows-msvc
+      SHEA_SYMPHONY_REQUIRE_LEGACY_SIDECAR: "1"
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.revision }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Prepare native toolchains
+        shell: pwsh
+        run: |
+          rustup target add $env:RELEASE_TARGET
+          npm ci --prefix app
+
+      - name: Verify and stage the matching Legacy runtime
+        shell: bash
+        run: |
+          cargo test --locked --test runtime_identity
+          bash scripts/stage-legacy-sidecar.sh
+
+      - name: Build the Windows x64 NSIS installer
+        working-directory: app
+        shell: pwsh
+        run: npm run tauri -- build --bundles nsis --target $env:RELEASE_TARGET -- --locked
+
+      - name: Inspect the installer and embedded runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $installers = @(Get-ChildItem app/src-tauri/target -Recurse -File -Filter "*-setup.exe")
+          if ($installers.Count -ne 1) {
+            throw "Expected one Windows NSIS installer, found $($installers.Count)"
+          }
+          $inspection = Join-Path $env:RUNNER_TEMP "shea-installer-inspection"
+          New-Item -ItemType Directory -Path $inspection | Out-Null
+          & 7z x "-o$inspection" $installers[0].FullName -y | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "7-Zip could not inspect the NSIS installer" }
+          $embeddedRuntimes = @(Get-ChildItem $inspection -Recurse -File -Filter "shea-symphony-legacy.exe")
+          if ($embeddedRuntimes.Count -eq 0) {
+            $nestedArchives = @(Get-ChildItem $inspection -Recurse -File | Where-Object { $_.Extension -in ".7z", ".zip" })
+            foreach ($archive in $nestedArchives) {
+              $nestedInspection = Join-Path $inspection "nested-$($archive.BaseName)"
+              New-Item -ItemType Directory -Path $nestedInspection | Out-Null
+              & 7z x "-o$nestedInspection" $archive.FullName -y | Out-Null
+              if ($LASTEXITCODE -ne 0) { throw "7-Zip could not inspect nested installer payload $($archive.Name)" }
+            }
+            $embeddedRuntimes = @(Get-ChildItem $inspection -Recurse -File -Filter "shea-symphony-legacy.exe")
+          }
+          if ($embeddedRuntimes.Count -ne 1) {
+            throw "Expected one embedded Legacy runtime, found $($embeddedRuntimes.Count)"
+          }
+          New-Item -ItemType Directory -Path release-build | Out-Null
+          $asset = Join-Path (Resolve-Path release-build) "Shea-Symphony-App-$env:RELEASE_TAG-windows-x64-setup.exe"
+          Copy-Item $installers[0].FullName $asset
+          node scripts/release/verify-release.mjs build `
+            --root $env:GITHUB_WORKSPACE `
+            --tag $env:RELEASE_TAG `
+            --revision $env:RELEASE_REVISION `
+            --target $env:RELEASE_TARGET `
+            --runtime $embeddedRuntimes[0].FullName `
+            --asset $asset `
+            --metadata release-build/windows-x64.release.json
+          if ($LASTEXITCODE -ne 0) { throw "Windows release verification failed" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows-x64
+          path: release-build/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: [preflight, macos-arm64, windows-x64]
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+      RELEASE_REVISION: ${{ needs.preflight.outputs.revision }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.revision }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release-input
+
+      - name: Aggregate both native builds and checksums
+        run: |
+          node scripts/release/verify-release.mjs aggregate \
+            --input release-input \
+            --output release-output \
+            --tag "$RELEASE_TAG" \
+            --revision "$RELEASE_REVISION"
+
+      - name: Create a draft, read every asset back, then publish stable
+        shell: bash
+        run: |
+          set -euo pipefail
+          notes="docs/releases/$RELEASE_TAG.md"
+          gh release create "$RELEASE_TAG" release-output/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$RELEASE_REVISION" \
+            --title "Shea Symphony App $RELEASE_TAG" \
+            --notes-file "$notes" \
+            --draft
+
+          release_id=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" --jq '.id')
+          gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" > /tmp/shea-draft-release.json
+          jq -e \
+            --arg tag "$RELEASE_TAG" \
+            '.draft == true and .prerelease == false and .tag_name == $tag and (.assets | length) == 4' \
+            /tmp/shea-draft-release.json >/dev/null
+
+          git fetch --force origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+          if [[ "$(git rev-list -n 1 "$RELEASE_TAG")" != "$RELEASE_REVISION" ]]; then
+            echo "Release tag does not resolve to the verified main revision" >&2
+            exit 1
+          fi
+
+          mkdir release-readback
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir release-readback
+          node scripts/release/verify-release.mjs published \
+            --input release-readback \
+            --tag "$RELEASE_TAG" \
+            --revision "$RELEASE_REVISION"
+
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+            -F draft=false \
+            -F prerelease=false \
+            -f make_latest=true \
+            >/tmp/shea-publish-response.json
+          gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+            >/tmp/shea-published-release.json
+          jq -e \
+            --arg tag "$RELEASE_TAG" \
+            '.draft == false and .prerelease == false and .tag_name == $tag and (.assets | length) == 4' \
+            /tmp/shea-published-release.json >/dev/null
+          latest_id=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.id')
+          if [[ "$latest_id" != "$release_id" ]]; then
+            echo "Published Release is not the repository latest Release" >&2
+            exit 1
+          fi
+
+          echo "Published $RELEASE_TAG from $RELEASE_REVISION after complete asset readback" >> "$GITHUB_STEP_SUMMARY"

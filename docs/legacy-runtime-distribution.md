@@ -26,9 +26,31 @@ The Temporal worker reports `temporal_worker` and
 `shea-legacy-cli-v1`. This output is credential-free build metadata. It is used
 for local role and integrity checks, not as a code-signing claim.
 
-## Bundle Pipeline
+## Stable Release Pipeline
 
-Run the release pipeline from `app/`:
+`.github/workflows/release.yml` is the only stable App publication path. It is
+manually dispatched from a clean current `main` commit whose stable semantic
+tag matches the root Rust package, App package, Tauri package, and Tauri config.
+Native `macos-15` Apple Silicon and `windows-2025` x64 jobs each build and
+inspect the App plus embedded Legacy sidecar. Publication aggregates both
+packages, their runtime identities, `release-manifest.json`, and `SHA256SUMS`.
+Relevant pull requests run the same native build jobs without tag or Release
+mutation; only an explicit `main` workflow dispatch can enter publication.
+
+The workflow creates a draft Release first, downloads all four assets back from
+GitHub, revalidates their exact set and checksums, and only then publishes the
+Release as stable/latest. A failed native build, identity check, aggregation,
+upload, tag readback, or checksum readback leaves no stable Release. A draft
+created before a later failure remains non-publication evidence for manual
+recovery; it is never promoted from partial state.
+
+The first release is unsigned: macOS uses only an ad-hoc bundle signature, and
+Windows has no publisher certificate. Release notes and setup keep Gatekeeper
+and SmartScreen visible and never bypass them.
+
+## Local Bundle Pipeline
+
+Run the local bundle pipeline from `app/`:
 
 ```sh
 npm run bundle:legacy
@@ -37,7 +59,8 @@ npm run bundle:legacy
 `scripts/stage-legacy-sidecar.sh` resolves the Rust target, builds the Legacy
 binary with the root lockfile, stages the target-specific artifact under
 `app/src-tauri/binaries/`, and verifies that its role, compatibility contract,
-and embedded source revision match the checkout. The Tauri build then requires
+embedded source revision, target, platform, and architecture match the
+checkout. The Tauri build then requires
 and embeds that staged sidecar in the supported local App bundle; installer,
 signing, and notarization flows remain out of scope. Generated binaries are
 ignored by Git.
@@ -56,7 +79,8 @@ digest, and atomically publishes:
 ~/.shea-symphony/runtime-discovery.json
 ```
 
-Tests and controlled installs can override that path with
+On Windows, the home directory falls back to `USERPROFILE` when `HOME` is not
+defined. Tests and controlled installs can override that path with
 `SHEA_SYMPHONY_RUNTIME_DISCOVERY_PATH`; packaging can provide an explicit
 sidecar path through `SHEA_SYMPHONY_BUNDLED_CLI_PATH`.
 

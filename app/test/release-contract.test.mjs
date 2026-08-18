@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -70,6 +70,13 @@ test('repository and App versions agree with the stable tag', () => {
   assert.deepEqual(new Set(Object.values(result.versions)), new Set(['0.1.0']));
   assert.throws(() => validateVersionContract(repositoryRoot, 'v0.1.1'), /does not match/);
   assert.throws(() => validateVersionContract(repositoryRoot, 'v0.1.0-rc.1'), /stable semantic/);
+});
+
+test('native desktop icon resources are present', () => {
+  const icons = join(repositoryRoot, 'app/src-tauri/icons');
+
+  assert.ok(existsSync(join(icons, 'icon.icns')), 'macOS icon resource is missing');
+  assert.ok(existsSync(join(icons, 'icon.ico')), 'Windows icon resource is missing');
 });
 
 test('release workflow is native, draft-first, and state-last', () => {

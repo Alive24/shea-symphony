@@ -156,8 +156,7 @@ orchestration, and coverage at the new typed boundary.
 
 ## Source Documents
 
-- OpenAI Symphony `SPEC.md` pinned at commit `58cf97da06d556c019ccea20c67f4f77da124bf3`: `https://github.com/openai/symphony/blob/58cf97da06d556c019ccea20c67f4f77da124bf3/SPEC.md`
-- `docs/bootstrap/SHEA_SYMPHONY_SPEC.md`
+- OpenAI Symphony upstream reference: `https://github.com/openai/symphony`
 - `docs/codex-app-server-transport.md`
 - `docs/README.md`
 - `docs/legacy-runtime-distribution.md`

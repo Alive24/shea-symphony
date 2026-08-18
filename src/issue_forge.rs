@@ -111,8 +111,8 @@ pub fn issue_skill_registry() -> Vec<IssueForgeSkill> {
             description: "Run-loop, runtime state, polling, resume, and orchestration control."
                 .into(),
             knowledge_sources: vec![
-                "docs/bootstrap/SHEA_SYMPHONY_SPEC.md".into(),
-                "docs/bootstrap/SHEA_WORKFLOW.md".into(),
+                "docs/milestones/2607-hardening/README.md".into(),
+                ".shea/contracts/workflow-capability.v1.md".into(),
             ],
             code_paths: vec![
                 "src/main.rs".into(),
@@ -131,8 +131,8 @@ pub fn issue_skill_registry() -> Vec<IssueForgeSkill> {
                 "GitHub Project v2, Linear, status transitions, workpads, and issue creation."
                     .into(),
             knowledge_sources: vec![
-                "docs/bootstrap/TRACKER_GITHUB_PROJECT_V2.md".into(),
-                "docs/bootstrap/SHEA_WORKFLOW.md".into(),
+                "docs/github-access-policy.md".into(),
+                ".shea/contracts/workflow-capability.v1.md".into(),
             ],
             code_paths: vec!["src/tracker.rs".into(), "src/config.rs".into()],
             guardrails: vec![
@@ -145,8 +145,8 @@ pub fn issue_skill_registry() -> Vec<IssueForgeSkill> {
             label: "Agent backend".into(),
             description: "Codex, Claude Code, dry-run, and subprocess execution backends.".into(),
             knowledge_sources: vec![
-                "docs/bootstrap/SHEA_SYMPHONY_SPEC.md".into(),
-                "docs/bootstrap/references/openai-symphony/SPEC.md".into(),
+                "docs/codex-app-server-transport.md".into(),
+                "docs/claude-code-stream-json.md".into(),
             ],
             code_paths: vec!["src/agent.rs".into(), "src/prompt.rs".into()],
             guardrails: vec![
@@ -160,8 +160,8 @@ pub fn issue_skill_registry() -> Vec<IssueForgeSkill> {
             description:
                 "Review agent lifecycle, finding classification, and review-state ownership.".into(),
             knowledge_sources: vec![
-                "docs/bootstrap/SHEA_WORKFLOW.md".into(),
-                "docs/bootstrap/SHEA_SYMPHONY_SPEC.md".into(),
+                "docs/README.md".into(),
+                ".shea/contracts/workflow-capability.v1.md".into(),
             ],
             code_paths: vec!["src/review.rs".into(), "src/main.rs".into()],
             guardrails: vec![
@@ -176,9 +176,8 @@ pub fn issue_skill_registry() -> Vec<IssueForgeSkill> {
             description: "README, dogfood readiness, workflow docs, and operator-facing examples."
                 .into(),
             knowledge_sources: vec![
-                "README.md".into(),
                 "docs/README.md".into(),
-                "docs/bootstrap/ISSUE_QUALITY_GATE_TEMPLATE.md".into(),
+                ".agents/skills/shea-issue-forge/references/contract.md".into(),
             ],
             code_paths: vec!["README.md".into(), "docs/README.md".into()],
             guardrails: vec![
@@ -192,7 +191,7 @@ pub fn issue_skill_registry() -> Vec<IssueForgeSkill> {
             description: "Credential-gated smoke tests, fixtures, and dry-run/live verification."
                 .into(),
             knowledge_sources: vec![
-                "docs/bootstrap/SHEA_SYMPHONY_SPEC.md".into(),
+                "docs/live-github-smoke-tests.md".into(),
                 "docs/README.md".into(),
             ],
             code_paths: vec![
@@ -857,7 +856,7 @@ fn repaired_draft(title: &str, markdown: &str, decision: &GateDecision) -> Strin
     );
     draft = draft.replace(
         "### Relevant Knowledge Sources\n\n- TBD",
-        "### Relevant Knowledge Sources\n\n- docs/bootstrap/SHEA_SYMPHONY_SPEC.md\n- docs/bootstrap/SHEA_WORKFLOW.md\n- docs/bootstrap/ISSUE_QUALITY_GATE_TEMPLATE.md",
+        "### Relevant Knowledge Sources\n\n- docs/README.md\n- .agents/skills/shea-issue-forge/references/contract.md",
     );
     draft = draft.replace(
         "### Relevant Code Paths\n\n- TBD",
@@ -933,7 +932,24 @@ mod tests {
             .repaired_markdown
             .contains("## Decisions / Assumptions"));
         assert!(report.repaired_markdown.contains("## Issue Goal"));
+        assert!(!report.repaired_markdown.contains("docs/bootstrap/"));
         assert!(validation.decision.is_dispatchable());
+    }
+
+    #[test]
+    fn issue_skill_registry_uses_current_context_sources() {
+        let sources = issue_skill_registry()
+            .into_iter()
+            .flat_map(|skill| skill.knowledge_sources)
+            .collect::<Vec<_>>();
+
+        assert!(sources
+            .iter()
+            .all(|source| !source.contains("docs/bootstrap/")));
+        assert!(sources.iter().any(|source| source == "docs/README.md"));
+        assert!(sources
+            .iter()
+            .any(|source| source == ".shea/contracts/workflow-capability.v1.md"));
     }
 
     #[test]

@@ -1,15 +1,17 @@
 # 2607 Implementation Packages
 
-Status: Draft
+Status: Accepted context index
 
 ## Purpose
 
 This directory translates the 2607 hardening architecture into implementation
 packages.
 
-These files are not GitHub issues yet. Promote a package or subpackage into the
-tracker only when it has a concrete owner, branch/worktree, and acceptance
-criteria ready for the normal Shea Symphony workflow.
+These files are design and acceptance contracts, not live progress records.
+GitHub Project #9 owns execution progress; `../STATUS.md` is the dated derived
+snapshot. Promote a package or subpackage into the tracker only when it has a
+concrete owner and a bounded acceptance contract ready for the normal Shea
+Symphony workflow.
 
 ## Package Order
 

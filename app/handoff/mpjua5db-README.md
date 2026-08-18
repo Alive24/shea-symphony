@@ -314,9 +314,10 @@ Run a bounded write tick only when the preview and Doctor output make sense:
 cargo run -- main loop workflows/shea-symphony.md --max-iterations 1 --write
 ```
 
-For the full operator runbook, read
-[`docs/operator-dogfood.md`](docs/operator-dogfood.md). For command details,
-read [`docs/cli-command-reference.md`](docs/cli-command-reference.md).
+This preserved design handoff predates the current App/Temporal runtime split.
+For current repository context, use [`docs/README.md`](../../docs/README.md)
+and resolve operational behavior through the selected repository Skill and
+Workflow Capability adapter.
 
 ## Project Map
 
@@ -326,14 +327,10 @@ read [`docs/cli-command-reference.md`](docs/cli-command-reference.md).
   prompt contracts.
 - [`.agents/skills/`](.agents/skills/): canonical first-party Shea and HALO
   Skills; target repositories own any copies they vendor from this source.
-- [`docs/operator-dogfood.md`](docs/operator-dogfood.md): supervised operator
-  launcher and live-run guidance.
-- [`docs/cli-command-reference.md`](docs/cli-command-reference.md): command
-  behavior, write boundaries, and examples.
-- [`docs/dogfood-readiness.md`](docs/dogfood-readiness.md): detailed capability
-  inventory and known gaps.
-- [`docs/bootstrap-parity-audit.md`](docs/bootstrap-parity-audit.md): OpenAI
-  Symphony parity and extension audit.
+- [`docs/README.md`](../../docs/README.md): coding-agent context and authority
+  routing.
+- [`.shea/contracts/workflow-capability.v1.md`](../../.shea/contracts/workflow-capability.v1.md):
+  stable workflow semantics and guarded mutation protocol.
 - [`docs/parent-subissue-topology.md`](docs/parent-subissue-topology.md):
   parent/subissue branch and review semantics.
 - [`docs/artifact-storage-policy.md`](docs/artifact-storage-policy.md):

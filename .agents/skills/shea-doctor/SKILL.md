@@ -22,6 +22,10 @@ Read `.shea/contracts/workflow-capability.v1.md`, resolve the active workflow, a
 
 Before any repair, state the violated invariant, affected issue/files, allowed path set, intended evidence, exact mutation, readback, and refusal boundary. Evidence is durable before Project state, and state is the final mutation.
 
+For a concrete issue, PR, claim, worktree, runtime, or lane-handoff symptom,
+read `references/operational-triage.md`. Do not load that reference for a
+repository-contract-only repair.
+
 Doctor never deletes worktrees, discards local work, clears a live claim speculatively, fabricates Review/Human evidence, merges, or changes an issue contract as a shortcut.
 
 Runtime-profile drift, missing repository execution requirements, harness
@@ -36,7 +40,10 @@ Use `repository_contract_repair` only for repository-owned Markdown contracts su
 - `missing_completion_invariant`
 - `duplicated_instruction`
 - `contradictory_instruction`
+- `wrong_layer_instruction`
 - `lane_leakage`
+- `excessive_procedure`
+- `unused_workpad_structure`
 - `stale_or_unreachable_text`
 - `unsafe_simplification`
 - `no_change`
@@ -46,7 +53,8 @@ Produce Observed evidence, Doctor inference, the complete allowed path set, pres
 In this mode, runtime envelopes and tracker mutation mechanics are not editable contracts. Repository-contract repair itself must not change Project status.
 
 Vendored repository skills are owned by that repository. Do not compare them
-  with upstream text or versions, overwrite customization, or recreate package-manager/parity behavior.
+with upstream text or versions, overwrite customization, or recreate
+package-manager/parity behavior.
 
 ## Bounded operational repairs
 

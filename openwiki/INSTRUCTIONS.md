@@ -10,7 +10,12 @@ Prioritize the current 2607 hardening work and explain its relationship to the 2
 
 Under .shea, inspect only .shea/prompts/**, .shea/template/**, and .shea/workflows/** when they help explain agent or operator workflows. Do not inspect, search, index, or document .shea/artifacts/**, .shea/logs/**, .shea/worktrees/**, .shea/local/**, .shea/**/*.local.*, .shea/app/**, or .shea/bin/**.
 
-Deprioritize docs/dream-log, docs/assets, generic bootstrap references, generated artifacts, build outputs, and local logs unless they are directly needed to explain current behavior. Do not deprioritize repository documentation and git history about the protected 2606 branch or its vendored App/CLI bootstrap path when they are needed to explain how current 2607 development is actually orchestrated. Continue to respect the .shea binary and runtime-path exclusions above.
+Use `docs/README.md` as the coding-agent context router. Deprioritize assets,
+generic bootstrap references, generated artifacts, build outputs, and local
+logs unless they are directly needed to explain current behavior. Preserve the
+protected 2606 branch only as an internal compatibility, recovery, and
+acceptance baseline; do not present its CLI as the normal public entrypoint.
+Continue to respect the `.shea` binary and runtime-path exclusions above.
 
 Describe OpenWiki maintenance only from checked-in repository evidence. This repository is already initialized; use `openwiki code --update` for maintenance rather than rerunning `openwiki code --init`, whose current upstream implementation may scaffold an example workflow. This repository currently has no `.github/workflows/openwiki-update.yml`, so do not claim that a scheduled GitHub Actions job refreshes the wiki. If such a workflow is added later, document its actual provider-neutral behavior, permissions, review boundary, and checked-in configuration rather than OpenWiki's upstream example defaults. Never document secret values.
 

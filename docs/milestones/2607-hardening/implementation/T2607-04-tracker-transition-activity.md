@@ -1,6 +1,8 @@
 # T2607-04 TrackerTransitionActivity
 
-Status: Partially implemented — #494 completed the inert DTO/idempotency contract slice
+Design Status: Draft
+
+Implementation progress is tracked in `../STATUS.md`.
 
 ## Implemented Contract Slice (#494)
 

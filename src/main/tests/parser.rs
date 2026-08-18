@@ -863,7 +863,7 @@ fn parses_review_freshness_command() {
         "--current-base".into(),
         "new-base".into(),
         "--changed-file".into(),
-        "docs/dogfood-readiness.md".into(),
+        "docs/README.md".into(),
         "--stale-reason".into(),
         "merge-conflict".into(),
         "--rework-class".into(),
@@ -878,7 +878,7 @@ fn parses_review_freshness_command() {
     };
 
     assert_eq!(input.issue_ref, "#33");
-    assert_eq!(input.changed_files, vec!["docs/dogfood-readiness.md"]);
+    assert_eq!(input.changed_files, vec!["docs/README.md"]);
     assert_eq!(input.stale_reason, ReviewStaleReason::MergeConflict);
     assert_eq!(
         input.rework_class,

@@ -1,202 +1,48 @@
 # Shea Symphony
 
-Shea Symphony is an opinionated and extended Rust implementation with GUI of OpenAI Symphony orchestration system to make it also work for small teams of humans that want to start building AI-native engineering workflows in a responsible and manageable way.
+Shea Symphony is a local orchestration system and desktop operator cockpit for
+running AI-assisted engineering work through explicit implementation, review,
+human approval, merge, and recovery boundaries.
 
-> ## Milestone Note: 2606 MVP
->
-> The 2606 MVP is a local Rust/CLI-first and desktop-observable implementation. It has been self-dogfooded on Shea Symphony itself and used to help build external projects. See [What 2606 MVP Demonstrates](#what-2606-mvp-demonstrates) for more details.
->
-> The next milestone is 2607 Hardening which aims to harden the runtime:
->
-> - Further separate Symphony runtime responsibilities from Shea extensions;
-> - Replace prototyped lane/autopilot loops with Temporal architecture for reliability, maintainability, and observability;
->   - Workflow coordination and orchestration;
->   - Activity definition and dispatching
->   - Worker supervision and lifecycle management
->   - Temporal Message (start, Query, Signal, and Update) operations for workflow state management and coordination;
->   - Temporal History for audit, self-improvement, and debugging;
-> - Keep tracker as durable queue/external state but use SQLite as local read model and active workflow index for user experience;
-> - UI/UX improvements for workflow/template/prompt/skill management and configuration;
+## Public entrypoints
 
-## Desktop App
+- Use the global [`setup-shea`](.agents/skills/setup-shea/SKILL.md) Skill to
+  onboard or reconcile a repository. It installs an immutable release-selected
+  contract while leaving the resulting repository resources customizable.
+  `setup-shea` itself is not vendored into the target repository.
+- Use the [Shea Symphony App](app/README.md) as the normal operator surface.
+  The Legacy CLI is an internal compatibility adapter used by the App, Skills,
+  and bounded recovery paths; it is not the normal user interface.
 
-The desktop app is the operator cockpit for observing queues, Human Todo, active lane work, local worktrees, and issue-level evidence without requiring a terminal expedition.
+## Documentation
 
-![Shea Symphony Operator Desk](docs/assets/screenshots/operator-desk.png)
+- [OpenWiki](openwiki/index.md) is the public documentation and navigation
+  surface. Its [freshness metadata](openwiki/.last-update.json) must be checked
+  before treating a generated page as current.
+- [`docs/README.md`](docs/README.md) routes coding agents to the smallest
+  authoritative repository context for a task.
 
-The Lanes view shows the current Human Todo queue, active lane work, and local issue worktrees in one operator-readable surface.
+OpenWiki is derived. Source code, tests, workflow configuration, repository
+contracts, accepted decisions, and the live tracker remain authoritative for
+their respective facts.
 
-![Shea Symphony Lanes overview](docs/assets/screenshots/lanes-overview.png)
+## Runtime transition
 
-LaneIssueView drills into one issue with tracker state, local worktree provenance, Codex handoff links, and lifecycle evidence.
+The protected 2606 MVP remains a behavior and recovery baseline while 2607
+replaces its hand-rolled orchestration with Temporal. On current `main`, the
+default `shea-symphony` executable is the Temporal worker. The App temporarily
+uses the separately identified `shea-symphony-legacy` sidecar for compatibility
+operations; see [`docs/legacy-runtime-distribution.md`](docs/legacy-runtime-distribution.md).
 
-![Shea Symphony LaneIssueView](docs/assets/screenshots/lane-issue-view.png)
+The active design and dated implementation snapshot live under
+[`docs/milestones/2607-hardening/`](docs/milestones/2607-hardening/).
 
-## TLDR: Beyond OpenAI Symphony
-
-### Extension Principles
-
-- Leave the Harness Alone: Do not interfere with how Codex or Claude Code work and evolve.
-- Team Workflow: Also scale in quality and productivity with more human operators.
-- Human Input: Human can help more by writing better issues and providing feedback.
-
-### How Humans Use It
-
-After setting up Shea Symphony, the desired human workflow looks like this:
-
-1. Use `shea-issue-forge` to shape ideas into executable issue contracts.
-2. Use `shea-backlog` for progress checkpoints, blocker summaries, and bounded residual-work memory; selected seeds return to Issue Forge for shaping.
-3. Use `shea-deepen` for a report-only search for architectural deepening opportunities.
-4. Use `shea-human-review` for issues waiting for final UAT and approval.
-5. Use `shea-doctor` for concrete failures that need diagnosis or recovery.
-
-Global `setup-shea` installs the manifest-declared core resource group from one
-immutable stable release. Target repositories own the installed Skills,
-lane/backend prompts, templates, and workflow configuration. Deepen, HALO
-research, and parent/subissue resources are explicit optional groups;
-`setup-shea` itself is never vendored into the target payload.
-
-### Extension Modules
-
-#### Issue Forge
-
-- A "grill-me" style dialectical experience activated by a configurable skill for the operator to shape ideas into executable issue contracts.
-- An issue quality gate before dispatch to ensure the issue is clear enough to dispatch.
-- A bounded Backlog skill for current checkpoints and residual-work memory, with executable shaping kept in Issue Forge.
-- A Deepen skill that reports evidence-backed architecture opportunities without changing the repository.
-
-#### Lane Model
-
-- Configurable backends and prompts for Main, Review, and Merge lanes.
-- Configurable handoff templates
-- Switch between Autoloop and Manual mode for fine control
-
-#### CLI Toolkit (2606 MVP, To be replaced by Temporal in 2607 Hardening)
-
-- MVP Runtime CLI for orchestration and debugging.
-- Consistent state machine powered by tracker and mutation behaviors across all lanes.
-- Workspace management and session restoration for interrupted runs.
-
-#### Additional Features
-
-- GitHub Project v2 tracker state machines (Linear planned);
-- parent/subissue branch topology;
-- Doctor diagnostics for stuck states;
-- repo-owned skills for conversational operator workflows;
-- repository onboarding for confirmed, credential-free Main runtime profiles;
-
----
-
-## Overview
-
-Codex and Claude Code are good at coding in a session, OpenAI Symphony simplifies the orchestration for a complete workflow with shared state, Shea Symphony makes the orchestration consistent, reliable, mindful, and collaborative.
-
-A real team needs a way to say that a slice of work is:
-
-- **Dispatchable**: clear and meaningful enough to dispatch;
-- **Isolated**: claimed by the right agent in the right environment;
-- **Worths Attention**: sufficiently reviewed by agents and worth human attention;
-- **Contextual for Review and Approval**: providing human with sufficient information and guidance to provide feedback and approve;
-- **Mergeable Automatically**: mergeable directly or assisted by agents, and only requires human intervention when there sematic conflicts;
-- **Recoverable**: able to restore state, progress, and runtime when stopped no matter how, or restart atomically;
-- **Tracked Semantically**: tracked in the backlog and promotable into issues later if not fully dispatchable yet.
-
-<!-- ![Shea Symphony lifecycle](docs/assets/shea-lifecycle.svg) -->
-
-The tracker stays the shared source of truth. Local artifacts, worktrees, logs, and session records exist to make the tracker state explainable and recoverable, not to replace it.
-
-- **Issue Forge** shapes rough work into executable issues.
-- **Main lane** implements one issue in an isolated workspace and stops at `Agent Review`.
-- **Review lane** performs independent agent review and records pass or rework evidence.
-- **Human Review** gives the operator a structured approval checkpoint.
-- **Merge lane** lands approved PRs, repairs safe mechanical drift, and routes real uncertainty to `Need Human Input`.
-- **Workpads and timeline evidence** keep the issue readable after the run.
-- **Doctor and status surfaces** explain stuck states without requiring a low-level log expedition.
-- **Backlog** preserves bounded progress, blocker, and residual-work memory; **Deepen** produces optional local architecture reports, and Issue Forge alone shapes selected candidates into executable work.
-
-The intended feeling is closer to a team cockpit than a prompt runner. You should be able to leave work moving, come back later, and understand what happened from the issue, PR, workpad, and status output.
-
-## The Lane Model
-
-Shea Symphony separates work by authority.
-
-### Main Lane
-
-The Main lane is for implementation. It claims a Todo or Rework issue, prepares or resumes an isolated worktree, runs the configured agent backend, verifies the change, opens or reuses a PR, records the Main Workpad, and stops at `Agent Review`.
-
-The Main agent must not approve its own work.
-
-The canonical workflow now defaults Main execution to Codex app-server. tmux remains available as an explicit fallback/debug substrate, but it is no longer the primary unattended direction.
-
-### Review Lane
-
-The Review lane is independent review. In the current dogfood path, automatic review uses headless `agy` CLI and records a durable review job ledger plus a human-readable issue comment.
-
-Passing review can route ordinary issues to `Human Review`. Routine native subissues can route directly to `Merging` when the parent issue owns final UAT. Confirmed findings route to `Rework`.
-
-### Human Review
-
-Human Review is not ceremonial. It is the place where the operator checks the issue, PR, review evidence, and UAT expectations before approving the work for merge.
-
-Human Review is intentionally skill-guided: the operator should get a briefing, understand what changed, run or inspect the right checks, and then make an explicit decision.
-
-### Merge Lane
-
-The Merge lane owns landing approved work. Clean merges stay direct CLI behavior; they do not need an LLM. Behind PRs can be updated and retried. Mechanical conflict repair should stay inside the merge lane when safe.
-
-`Need Human Input` is reserved for semantic uncertainty, unsafe state, verification failure, missing evidence, or infrastructure failures that need an operator decision.
-
-Merge repair should not erase the fact that the issue already passed Agent Review and Human Review. It should preserve reviewed intent, record what changed, and land only when the result is still safe.
-
-## Evidence Surfaces
-
-Shea Symphony is opinionated about evidence because agent work without evidence turns into archaeology.
-
-- The **issue body** is the contract.
-- The **Main Workpad** is the current implementation surface.
-- **Timeline comments** record Review, Human Review, Merge, Rework, and Doctor events.
-- The **PR** is the code handoff and must be visible through linked-PR readback.
-- **Local artifacts** store prompts, app-server protocol output, stderr, normalized events, review ledgers, and session registry records.
-- **Doctor** connects tracker state, runtime state, and local evidence into a readable diagnosis.
-
-The goal is not to keep every byte forever. The goal is that a human can answer "what happened here?" without guessing.
-
-## Design Boundaries
-
-Shea Symphony is orchestration infrastructure. It should not contain downstream application business logic. Domain work belongs in tracked issues and isolated issue workspaces.
-
-The tracker is the operating source of truth. Local runtime files make tracker state recoverable and auditable, but lane decisions should refresh live tracker state before claiming, reviewing, or merging work.
-
-Role boundaries matter:
-
-- Main implementation stops at `Agent Review`.
-- Review evidence gates movement toward `Human Review` or `Merging`.
-- Human approval gates ordinary merges.
-- Merge repair stays in the merge lane unless it needs a real human decision.
-- Backlog seeds and Deepen reports are advisory until an operator selects a candidate for Issue Forge shaping.
-
-Write-mode commands should record evidence before state transitions, preserve claims and audit records, and fail closed when the safe next action is unclear.
-
-## What 2606 MVP Demonstrates
-
-The current workflow can:
-
-- load and validate workflow files;
-- read GitHub Project v2 tracker state;
-- validate issue contracts before dispatch;
-- create and promote tracker issues through Forge;
-- run bounded Main, Review, and Merge lane ticks;
-- use Codex app-server for Main execution;
-- use headless `agy` for Review execution;
-- create isolated issue worktrees and PR handoffs;
-- preserve Main workpads and lane timeline evidence;
-- recover interrupted Main and Merge lane work by default;
-- inspect runtime/session status;
-- diagnose tracker, PR, worktree, skill, runtime, and lane-state problems;
-- plan future all-lane autoloop actions without mutating state.
-
-It has been developing with self-dogfooding, and helped built some external projects with this command:
+## Development checks
 
 ```bash
-npm run tauri -- dev -- --workdir $YOUR_PROJECT_PATH
+cargo fmt --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test
+npm --prefix app test
+npm --prefix app run check
 ```

@@ -58,7 +58,10 @@ Other `.shea` runtime, artifact, log, worktree, local, app, and binary trees are
 7. implementation T2607-05 and T2607-06 — **Draft** work packages for the Activity boundary and state machine; registration or DTO seams do not satisfy them.
 8. `implementation/README.md` and T2607-01 through T2607-08 — dependency-aware packages, not proof of live tracker status.
 
-For 2606 behavior, prefer `README.md`, `docs/main-orchestration-spine.md`, `docs/operator-dogfood.md`, `docs/operator-doctor.md`, and current legacy source/tests. Summarize rather than duplicate these large documents.
+For 2606 behavior, start from `docs/README.md`, the selected repository Skill,
+`.shea/contracts/workflow-capability.v1.md`, its legacy adapter, and current
+legacy source/tests. Treat it as an internal compatibility, recovery, and
+acceptance baseline rather than the public user entrypoint.
 
 ## Tests
 

@@ -4232,7 +4232,7 @@ mod tests {
             current_head_sha: "new-head".into(),
             prior_base_sha: "old-base".into(),
             current_base_sha: "new-base".into(),
-            changed_files: vec!["docs/dogfood-readiness.md".into()],
+            changed_files: vec!["docs/README.md".into()],
             stale_reason: ReviewStaleReason::MergeConflict,
             rework_class: ReviewReworkClass::MechanicalConflictResolution,
             patch_summary: Some("Resolved merge conflict without semantic changes.".into()),

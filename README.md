@@ -4,6 +4,36 @@ Shea Symphony is a local orchestration system and desktop operator cockpit for
 running AI-assisted engineering work through explicit implementation, review,
 human approval, merge, and recovery boundaries.
 
+## Operator cockpit
+
+The Shea Symphony App keeps lane queues, human decisions, local worktrees, and
+issue-level evidence visible in one foreground workspace.
+
+![Shea Symphony Operator Desk](docs/assets/screenshots/operator-desk.png)
+
+Shea Symphony helps an operator:
+
+- shape rough intent into tracker-backed, executable issue contracts;
+- move implementation through separate Main, Agent Review, Human Review, and
+  Merge boundaries; and
+- understand and recover interrupted work from durable evidence instead of
+  reconstructing an agent session from scratch.
+
+<details>
+<summary>More App views</summary>
+
+The Lanes view brings the current human queue, active lane work, and local
+issue worktrees together.
+
+![Shea Symphony Lanes overview](docs/assets/screenshots/lanes-overview.png)
+
+The issue view connects tracker state with worktree provenance, handoff links,
+and lifecycle evidence.
+
+![Shea Symphony issue view](docs/assets/screenshots/lane-issue-view.png)
+
+</details>
+
 ## Public entrypoints
 
 - Use the global [`setup-shea`](.agents/skills/setup-shea/SKILL.md) Skill to

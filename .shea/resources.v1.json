@@ -44,12 +44,12 @@
         { "kind": "documentation", "path": "../docs/template-consumer-audit.md" }
       ]
     },
-    "improve": {
+    "deepen": {
       "optional": true,
       "available": true,
       "depends_on": ["core"],
       "resources": [
-        { "kind": "skill", "path": "../.agents/skills/shea-improve" }
+        { "kind": "skill", "path": "../.agents/skills/shea-deepen" }
       ]
     },
     "halo_research": {

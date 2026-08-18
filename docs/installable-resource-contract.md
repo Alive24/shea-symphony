@@ -9,7 +9,7 @@ Skills, workflow/capability contracts, lane and backend prompts, runtime
 templates, and authoritative contract documentation. Global `setup-shea` is
 deliberately absent. Optional groups are explicit:
 
-- `improve` installs the report-only `shea-improve` extension;
+- `deepen` installs the report-only `shea-deepen` extension;
 - `halo_research` installs the HALO research seed extension;
 - `parent_subissues` installs parent topology/readiness resources;
 - `shea_docs` reserves the future documentation extension and is unavailable

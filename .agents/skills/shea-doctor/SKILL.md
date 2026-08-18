@@ -1,13 +1,20 @@
 ---
 name: shea-doctor
-description: Diagnose concrete Shea Symphony tracker, repository-contract, workspace, runtime, and lane-boundary failures; propose or apply only bounded repairs with evidence and explicit authority.
-metadata:
-  short-description: Diagnose and repair Shea safely
+description: Diagnose concrete Shea Symphony tracker, repository-contract, workspace, runtime, faulty-configuration, stuck-execution, and lane-boundary failures; propose or apply only bounded repairs with evidence and explicit authority. Use for an observed failure that needs diagnosis or repair. Do not use for general architecture or change-locality assessment, documentation quality, freshness, or reconciliation, or OpenWiki work.
 ---
 
 # Shea Symphony Doctor
 
 Doctor diagnoses and repairs known invariants. It is not an implementation, Review, Human approval, merge, cleanup, or self-modification authority.
+
+## Route by primary object
+
+Continue only when the primary object is a concrete failure or bounded repair,
+including a broken behavior-bearing Markdown contract. Route general
+architecture or change-locality assessment to `$shea-deepen` when installed.
+Route documentation correctness, freshness, reconciliation, or OpenWiki work to
+`$shea-docs` when installed; otherwise stop without using Doctor as a fallback.
+The file type of supporting evidence does not change this ownership.
 
 ## Resolve and diagnose
 

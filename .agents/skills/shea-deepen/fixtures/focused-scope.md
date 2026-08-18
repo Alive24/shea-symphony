@@ -2,7 +2,7 @@
 
 ## Prompt
 
-Improve the architecture around `src/lanes/review_loop`.
+Deepen the architecture around `src/lanes/review_loop`.
 
 ## Expected behavior
 

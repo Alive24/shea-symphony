@@ -8,7 +8,7 @@ Shea Symphony is a supervised AI-native engineering workflow cockpit for teams t
 
 ## Product Context
 
-Source-backed product context comes from the captured repository README, `docs/bootstrap/SHEA_SYMPHONY_SPEC.md`, `docs/bootstrap/SHEA_WORKFLOW.md`, and `docs/dogfood-readiness.md`. The product is a private-first team harness for orchestrating coding agents against tracked engineering work. It preserves the official Symphony workflow shape while adding GitHub Project v2, Linear tracker support, assignee filtering, Issue Forge, issue quality gates, independent Agent Review, Human Review, guarded Merge, and Doctor diagnostics.
+Source-backed product context comes from the captured repository README, `docs/bootstrap/SHEA_SYMPHONY_SPEC.md`, `docs/bootstrap/SHEA_WORKFLOW.md`, and the current `docs/README.md` context router. The product is a private-first team harness for orchestrating coding agents against tracked engineering work. It preserves the official Symphony workflow shape while adding GitHub Project v2, Linear tracker support, assignee filtering, Issue Forge, issue quality gates, independent Agent Review, Human Review, guarded Merge, and Doctor diagnostics.
 
 Primary UI surfaces evidenced by the source package:
 

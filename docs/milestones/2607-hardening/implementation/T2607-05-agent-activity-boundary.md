@@ -1,6 +1,6 @@
 # T2607-05 Agent Activity Boundary
 
-Status: Draft
+Design Status: Draft
 
 ## Purpose
 

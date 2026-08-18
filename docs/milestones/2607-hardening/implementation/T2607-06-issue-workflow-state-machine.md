@@ -1,6 +1,6 @@
 # T2607-06 IssueWorkflow State Machine
 
-Status: Draft
+Design Status: Draft
 
 ## Purpose
 

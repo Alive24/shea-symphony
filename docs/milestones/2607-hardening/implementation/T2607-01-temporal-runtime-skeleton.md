@@ -1,6 +1,6 @@
 # T2607-01 Temporal Runtime Skeleton
 
-Status: Draft
+Design Status: Draft
 
 ## Purpose
 

@@ -1,6 +1,6 @@
 # T2607-07 App Integration
 
-Status: Draft
+Design Status: Draft
 
 ## Purpose
 

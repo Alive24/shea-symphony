@@ -177,10 +177,10 @@ pub fn issue_skill_registry() -> Vec<IssueForgeSkill> {
                 .into(),
             knowledge_sources: vec![
                 "README.md".into(),
-                "docs/dogfood-readiness.md".into(),
+                "docs/README.md".into(),
                 "docs/bootstrap/ISSUE_QUALITY_GATE_TEMPLATE.md".into(),
             ],
-            code_paths: vec!["README.md".into(), "docs/dogfood-readiness.md".into()],
+            code_paths: vec!["README.md".into(), "docs/README.md".into()],
             guardrails: vec![
                 "Keep docs honest about dry-run, stubbed, and live behavior.".into(),
                 "Do not claim full autonomous orchestration before controlled live proof.".into(),
@@ -193,7 +193,7 @@ pub fn issue_skill_registry() -> Vec<IssueForgeSkill> {
                 .into(),
             knowledge_sources: vec![
                 "docs/bootstrap/SHEA_SYMPHONY_SPEC.md".into(),
-                "docs/dogfood-readiness.md".into(),
+                "docs/README.md".into(),
             ],
             code_paths: vec![
                 "tests/fixtures/".into(),

@@ -2,13 +2,13 @@
 
 > Category: Custom
 > Surface: web
-> Source evidence: `context/source-context.md`, `context/github/Alive24-shea-symphony.md`, `context/local-code/shea-symphony.md`, and snapshots under `context/local-code/shea-symphony/files/`.
+> Source evidence: the current repository context router, App documentation, live App source, and milestone documents linked under [Source Anchors](#source-anchors).
 
 Shea Symphony is a supervised AI-native engineering workflow cockpit for teams that run coding agents against tracker-backed work. It turns rough engineering intent into executable issue contracts, runs Main, Review, Human Review, and Merge lanes in isolated workspaces, records durable workpad and timeline evidence, and gives human operators clear review, recovery, and merge decisions.
 
 ## Product Context
 
-Source-backed product context comes from the captured repository README, `docs/bootstrap/SHEA_SYMPHONY_SPEC.md`, `docs/bootstrap/SHEA_WORKFLOW.md`, and the current `docs/README.md` context router. The product is a private-first team harness for orchestrating coding agents against tracked engineering work. It preserves the official Symphony workflow shape while adding GitHub Project v2, Linear tracker support, assignee filtering, Issue Forge, issue quality gates, independent Agent Review, Human Review, guarded Merge, and Doctor diagnostics.
+Source-backed product context comes from the current repository `README.md`, `docs/README.md` context router, App documentation, workflow contracts, source code, and tests. The product is a private-first team harness for orchestrating coding agents against tracked engineering work. It preserves the Symphony workflow shape while adding GitHub Project v2, Linear tracker support, assignee filtering, Issue Forge, issue quality gates, independent Agent Review, Human Review, guarded Merge, and Doctor diagnostics.
 
 Primary UI surfaces evidenced by the source package:
 
@@ -24,8 +24,8 @@ Implementation source context:
 
 - `app/package.json` identifies the web stack as SvelteKit, Vite, and Svelte.
 - `app/src/app.css` supplies the live cockpit visual system and component classes.
-- `web/.svelte-kit/output/server/chunks/LaneCard.js` supplies the captured lane summary component structure.
-- `app/build/favicon.svg` supplies the preserved runtime icon asset.
+- `app/src/lib/LaneCard.svelte` supplies the live lane summary component structure.
+- `app/static/favicon.svg` supplies the runtime icon asset.
 
 ## 1. Visual Theme & Atmosphere
 
@@ -217,7 +217,7 @@ Use warning/danger border treatments only when operator action is truly required
 
 ### Lane Card
 
-Source evidence: `source_examples/web/.svelte-kit/output/server/chunks/LaneCard.js`.
+Source evidence: `app/src/lib/LaneCard.svelte`.
 
 Lane cards show lane name, posture, a compact View lane action, active/retrying/blocked metrics, and latest evidence. Use them for Main, Review, and Merge summaries. Keep lane cards breathable: stack lane summaries vertically inside constrained preview frames, use 16px card padding, keep metrics compact, and reserve full-size filled buttons for primary human decisions rather than secondary lane navigation.
 
@@ -293,9 +293,10 @@ Copy should always reveal the next safe action and the evidence behind it. Do no
 
 ## Source Anchors
 
-- Product README excerpt and source inventory: `context/local-code/shea-symphony.md`.
+- Product boundary and public entrypoints: `README.md`.
+- Coding-agent context routing: `docs/README.md`.
+- App/runtime boundary: `app/README.md`.
 - Live cockpit CSS tokens and components: `app/src/app.css`.
-- LaneCard implementation: `source_examples/web/.svelte-kit/output/server/chunks/LaneCard.js`.
-- Runtime/workflow policy: `context/local-code/shea-symphony/files/docs/bootstrap/SHEA_WORKFLOW.md`.
-- Product specification: `context/local-code/shea-symphony/files/docs/bootstrap/SHEA_SYMPHONY_SPEC.md`.
-- Dogfood capability map: `context/local-code/shea-symphony/files/docs/dogfood-readiness.md`.
+- LaneCard implementation: `app/src/lib/LaneCard.svelte`.
+- Workflow capability contract: `.shea/contracts/workflow-capability.v1.md`.
+- Current runtime milestone: `docs/milestones/2607-hardening/README.md`.

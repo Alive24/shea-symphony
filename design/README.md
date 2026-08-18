@@ -6,7 +6,7 @@ Shea Symphony Design System is a reusable Open Design package for building evide
 
 Shea Symphony helps a human operator turn rough engineering intent into executable issue contracts, run implementation agents in isolated workspaces, request independent agent review, preserve audit evidence, and land approved pull requests through a guarded merge lane.
 
-The source README captured by both GitHub and local intake describes Shea Symphony as a team workflow system for supervised AI-native engineering. It is designed around a human operator, not a hidden daemon. The primary product surfaces are:
+The current repository describes Shea Symphony as a team workflow system for supervised AI-native engineering. It is designed around a human operator, not a hidden daemon. The primary product surfaces are:
 
 - Issue Forge for shaping rough work into executable issues.
 - Operator Desk for the top human decisions and lane readiness.
@@ -17,17 +17,16 @@ The source README captured by both GitHub and local intake describes Shea Sympho
 
 ## Product Context
 
-The source specification positions Shea Symphony as a Rust implementation of an OpenAI-Symphony-style orchestration system with Shea-specific extensions. The workflow adds GitHub Project v2, Linear tracker support, assignee filtering, Issue Forge, issue quality gates, extra normalized states, independent Agent Review, and Codex/Claude Code backend support. The dogfood readiness snapshot shows a maturing supervised foreground-autopilot product with Project read/write flows, runtime state, review freshness, merge repair, Doctor checks, and a SvelteKit/Vite web operator desk.
+Shea Symphony is transitioning from its protected 2606 Legacy runtime to a Temporal-backed runtime while retaining one operator workflow contract. The current App, repository context router, milestone package, source code, and tests are the evidence for product behavior; this design package does not preserve copies of them.
 
 Source references:
 
 - GitHub repository: `https://github.com/Alive24/shea-symphony`.
-- Local source folder: `/Volumes/Bohemialive/GitHub/shea-symphony`.
-- GitHub evidence note: `context/github/Alive24-shea-symphony.md`.
-- Local evidence note: `context/local-code/shea-symphony.md`.
-- Live cockpit CSS snapshot: `app/src/app.css`.
-- Product spec snapshot: `context/local-code/shea-symphony/files/docs/bootstrap/SHEA_SYMPHONY_SPEC.md`.
-- Workflow policy snapshot: `context/local-code/shea-symphony/files/docs/bootstrap/SHEA_WORKFLOW.md`.
+- Repository context router: `../docs/README.md`.
+- App/runtime boundary: `../app/README.md`.
+- Live cockpit CSS: `../app/src/app.css`.
+- Live lane component: `../app/src/lib/LaneCard.svelte`.
+- Current runtime milestone: `../docs/milestones/2607-hardening/README.md`.
 
 ## Package Contents
 
@@ -36,10 +35,9 @@ Source references:
 - `SKILL.md` - Claude Design-style skill entry for future agents.
 - `preview/` - focused Design System tab review cards.
 - `ui_kits/app/` - runnable React/Babel app kit that composes the Operator Desk surface from modular components.
-- `assets/favicon.svg` - convenience alias for the captured runtime favicon.
-- `build/favicon.svg` - preserved runtime asset copied from the source build snapshot.
-- `source_examples/` - high-signal source examples copied outside `context/` for future inspection.
-- `context/` - provenance and bounded intake snapshots from GitHub and the linked local code folder.
+- `assets/favicon.svg` - convenience alias for the runtime favicon.
+- `build/favicon.svg` - design-package copy of the current runtime favicon.
+- `PROVENANCE.md` - current source anchors and the rule against checked-in repository snapshots.
 
 ## Preview Manifest
 
@@ -64,7 +62,7 @@ Keep this manifest synchronized with the actual `preview/*.html` files whenever 
 3. Use Daylight by default for package review and handoff screens. Add `data-theme="night"` to the document root only when the artifact should match the original dark cockpit.
 4. Inspect the focused cards under `preview/` for token and component behavior; every preview module includes Daylight and Night samples and should stay that way when edited.
 5. Use `ui_kits/app/index.html` and its `components/` files as the applied Operator Desk starting point.
-6. Inspect `source_examples/web/.svelte-kit/output/server/chunks/LaneCard.js` when implementing lane summaries in code-adjacent artifacts.
+6. Inspect `../app/src/lib/LaneCard.svelte` when implementing lane summaries in code-adjacent artifacts.
 7. Preserve `build/favicon.svg` if generating app shells, launcher views, or brand asset cards.
 
 ## Implementation Notes

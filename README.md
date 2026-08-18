@@ -1,8 +1,6 @@
 # Shea Symphony
 
-Shea Symphony is a local orchestration system and desktop operator cockpit for
-running AI-assisted engineering work through explicit implementation, review,
-human approval, merge, and recovery boundaries.
+Shea Symphony: An opinionated and extended Rust implementation with GUI of OpenAI Symphony orchestration system to make it also work for powerusers or small engineer teams that want to build AI-native engineering workflows in a responsible and manageable way. It adds higher configurability, observability, recoverability, and also new workflow nodes including issue forge, team-aware claiming and processing with boundaries, guided human review and approval, reflective backlogging, docs, improve code base, HALO, etc.
 
 ## Operator cockpit
 

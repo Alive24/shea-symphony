@@ -1,3 +1,0 @@
-[submodule "docs/bootstrap/references/openai-symphony"]
-	path = docs/bootstrap/references/openai-symphony
-	url = https://github.com/openai/symphony.git

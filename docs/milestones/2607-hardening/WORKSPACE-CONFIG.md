@@ -61,8 +61,8 @@ SHA-256 digest. Only an explicit `cli_path` may temporarily select an unmarked
 Symphony-created issue worktrees should live under the local runtime root by
 default, not inside the canonical repository worktree.
 
-## Open Questions
+## Pending Decisions
 
-- Exact local runtime directory naming by owner/repo/profile.
-- Whether `.shea/workflow.md` replaces or augments root `WORKFLOW.md` in legacy
-  repos.
+See `QUESTIONS.md` entries `Q2607-01` and `Q2607-02`. Do not freeze a new
+machine-local namespace or legacy workflow import rule in this document before
+those decisions are resolved.

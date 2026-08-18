@@ -151,49 +151,22 @@ orchestration, and coverage at the new typed boundary.
   default; promote subflows to Child Workflows only when they need independent
   durable orchestration.
 - Performance: measure and reduce repeated non-LLM control-plane work.
-- Implementation backlog: split the hardening work into executable packages
+- Implementation packages: split the hardening work into executable contracts
   without prematurely creating GitHub issues.
 
-## Source Documents
+## Context Routes
 
-- OpenAI Symphony upstream reference: `https://github.com/openai/symphony`
-- `docs/codex-app-server-transport.md`
-- `docs/README.md`
-- `docs/legacy-runtime-distribution.md`
-- `AGENT-ACTIVITY-CONTRACT.md`
-- `CHILD-WORKFLOW-POLICY.md`
-- `IMPLEMENTATION-BACKLOG.md`
-- `TRACKER-ORGANIZATION.md`
-- `FEEDBACK-INTAKE.md`
-- `implementation/README.md`
-- `implementation/T2607-01-temporal-runtime-skeleton.md`
-- `implementation/T2607-02-local-state-db.md`
-- `implementation/T2607-03-workflow-coordinator.md`
-- `implementation/T2607-04-tracker-transition-activity.md`
-- `implementation/T2607-05-agent-activity-boundary.md`
-- `implementation/T2607-06-issue-workflow-state-machine.md`
-- `implementation/T2607-07-app-integration.md`
-- `implementation/T2607-08-deletion-performance-hardening.md`
-- `docs/milestones/2607-hardening/RUNTIME-ROLE-MAPPING.md`
-- `docs/milestones/2607-hardening/TEMPORAL-RUST-SDK-INTAKE.md`
-- `docs/milestones/2607-hardening/TEMPORAL-NOOP-SMOKE.md`
-- `docs/milestones/2607-hardening/ACTIVITY-ERROR-TAXONOMY.md`
-- `docs/milestones/2607-hardening/ISSUE-WORKFLOW.md`
-- `docs/milestones/2607-hardening/ISSUE-WORKFLOW-STATE.md`
-- `docs/milestones/2607-hardening/LOCAL-STATE-DB.md`
-- `docs/milestones/2607-hardening/OPERATOR-ACTION-BRIDGE.md`
-- `docs/milestones/2607-hardening/TASK-QUEUES.md`
-- `docs/milestones/2607-hardening/TEMPORAL-CONCURRENCY.md`
-- `docs/milestones/2607-hardening/TEMPORAL-SPINE.md`
-- `docs/milestones/2607-hardening/WORKFLOW-ACTIVATION.md`
-- `docs/milestones/2607-hardening/SUBTRACTION-INVENTORY.md`
-- `docs/milestones/2607-hardening/SNAPSHOT-AND-DASHBOARD.md`
-- `docs/milestones/2607-hardening/TRACKER-TRANSITIONS.md`
-- `docs/milestones/2607-hardening/TRACKER-TRANSITION-ACTIVITY.md`
-- `docs/milestones/2607-hardening/adr/0006-temporal-local-runtime-spine.md`
-- `docs/milestones/2607-hardening/adr/0007-local-state-db-read-model.md`
-- `docs/milestones/2608-workflow-graph-extension/README.md`
-- `docs/legacy-runtime-distribution.md`
+Start with only the row that owns the question being answered. Package and ADR
+documents link their narrower supporting evidence; do not load the milestone
+directory wholesale.
+
+| Need | Start here |
+| --- | --- |
+| Milestone goal, boundary, and success criteria | This file |
+| Dated implementation coverage | `STATUS.md` |
+| Approved or proposed design decisions | `adr/README.md` |
+| Implementation and acceptance contracts | `implementation/README.md` |
+| Unresolved decisions that can still change 2607 | `QUESTIONS.md` |
 
 ## Progress Snapshot
 
@@ -202,14 +175,6 @@ snapshot for coding agents that need milestone context without reconstructing
 it from historical documents. Reconcile the snapshot from the Project and
 accepted implementation evidence; do not treat package or ADR status as live
 delivery status.
-
-## Open Questions
-
-See `QUESTIONS.md`.
-
-## Decisions
-
-Decision records live under `adr/`.
 
 ## Backlog Notes
 

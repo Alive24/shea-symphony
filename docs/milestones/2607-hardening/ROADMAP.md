@@ -127,8 +127,8 @@ Success means a maintainer can answer:
   materialized snapshots.
 - Keep slow external dependencies visible in status snapshots.
 
-## Implementation Backlog
+## Implementation Packages
 
-Use `IMPLEMENTATION-BACKLOG.md` to promote the architecture decisions above
-into code work packages. It is not a GitHub issue list; it is the staging area
-for implementation slices before they enter the normal issue workflow.
+Use `implementation/README.md` to select the owning design and acceptance
+contract before promoting a bounded slice through the normal issue workflow.
+GitHub Project #9 owns live execution progress.

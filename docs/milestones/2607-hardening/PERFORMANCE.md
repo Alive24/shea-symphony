@@ -51,9 +51,8 @@ Use relative targets until the first timing pass lands:
 - Merge lane PR read/mergeability check
 - App runtime snapshot refresh
 
-## Open Questions
+## Pending Decisions
 
-- First concrete time budget for `project state`.
-- First concrete time budget for one App refresh.
-- Whether timing is written to JSONL, status snapshot, or both.
-- Which local operations dominate App refresh after artifact reads are removed.
+See `QUESTIONS.md` entries `Q2607-03` and `Q2607-04`. Measure which local
+operations dominate App refresh after artifact reads are removed before fixing
+the first budgets or timing-event schema.

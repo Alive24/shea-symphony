@@ -13,7 +13,8 @@ Use the pinned repository surfaces to check:
 - capability contract, adapter role, and compatibility resolution;
 - target repository and GitHub Project binding;
 - selected harness and project-local Skill visibility;
-- runtime executable identity and compatibility;
+- stable App package/release-manifest identity, installed discovery digest,
+  live runtime executable identity, target, and compatibility;
 - required runtime-profile validity, source drift, direct probes, and ignored
   machine-local path;
 - configured baseline formatting, lint, build, test, or documentation checks;
@@ -38,6 +39,8 @@ Return one setup report with:
 - target repository/root;
 - stable release tag and full immutable commit;
 - selected harnesses and vendored Skills;
+- stable App asset, install/reuse outcome, discovery identity, and unsigned
+  platform-security boundary;
 - resolved core and optional resource groups plus exact installed sources;
 - added, unchanged, kept-conflict, replaced, and manually merged paths;
 - runtime-profile identity and safe readiness summary;

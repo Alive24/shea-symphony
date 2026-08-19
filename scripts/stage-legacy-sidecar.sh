@@ -61,7 +61,7 @@ trap - EXIT HUP INT TERM
 
 runtime_json=$($staged_binary --runtime-info)
 expected_revision=$(git -C "$repository_root" rev-parse HEAD)
-RUNTIME_JSON="$runtime_json" EXPECTED_REVISION="$expected_revision" node -e '
+RUNTIME_JSON="$runtime_json" EXPECTED_REVISION="$expected_revision" EXPECTED_TARGET="$target" node -e '
   const identity = JSON.parse(process.env.RUNTIME_JSON);
   if (identity.schema_version !== 1 || identity.binary_role !== "legacy_cli") {
     throw new Error("staged artifact is not a marked Legacy CLI");
@@ -71,6 +71,17 @@ RUNTIME_JSON="$runtime_json" EXPECTED_REVISION="$expected_revision" node -e '
   }
   if (identity.source_revision !== process.env.EXPECTED_REVISION) {
     throw new Error("staged artifact source revision does not match the App checkout");
+  }
+  if (identity.target !== process.env.EXPECTED_TARGET) {
+    throw new Error("staged artifact target does not match the requested App target");
+  }
+  const expected = process.env.EXPECTED_TARGET === "aarch64-apple-darwin"
+    ? { platform: "macos", architecture: "aarch64" }
+    : process.env.EXPECTED_TARGET === "x86_64-pc-windows-msvc"
+      ? { platform: "windows", architecture: "x86_64" }
+      : null;
+  if (expected && (identity.platform !== expected.platform || identity.architecture !== expected.architecture)) {
+    throw new Error("staged artifact platform or architecture does not match the requested App target");
   }
 '
 

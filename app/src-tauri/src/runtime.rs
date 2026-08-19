@@ -36,11 +36,15 @@ pub fn default_discovery_path() -> PathBuf {
     if let Some(path) = env::var_os("SHEA_SYMPHONY_RUNTIME_DISCOVERY_PATH") {
         return PathBuf::from(path);
     }
-    env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
+    discovery_home(env::var_os("HOME"), env::var_os("USERPROFILE"))
         .join(".shea-symphony")
         .join(DISCOVERY_FILE_NAME)
+}
+
+fn discovery_home(home: Option<std::ffi::OsString>, user_profile: Option<std::ffi::OsString>) -> PathBuf {
+    home.or(user_profile)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 pub fn validate_explicit_runtime(path: &Path) -> Result<(), String> {
@@ -315,6 +319,21 @@ fn sha256_file(path: &Path) -> Result<String, String> {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn discovery_home_uses_windows_user_profile_when_home_is_absent() {
+        assert_eq!(
+            discovery_home(None, Some(std::ffi::OsString::from(r"C:\Users\operator"))),
+            PathBuf::from(r"C:\Users\operator")
+        );
+        assert_eq!(
+            discovery_home(
+                Some(std::ffi::OsString::from("/Users/operator")),
+                Some(std::ffi::OsString::from(r"C:\Users\operator"))
+            ),
+            PathBuf::from("/Users/operator")
+        );
+    }
 
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;

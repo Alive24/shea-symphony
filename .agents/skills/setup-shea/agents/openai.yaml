@@ -1,4 +1,4 @@
 interface:
   display_name: "Setup Shea"
   short_description: "Onboard and reconcile a Shea repository"
-  default_prompt: "Use $setup-shea to inspect this repository, plan a confirmation-gated setup from one immutable stable Shea release, and finish with a no-claim readiness report."
+  default_prompt: "Use $setup-shea to verify or install the matching stable Shea App, reconcile this repository from the same immutable release, and finish with a no-claim readiness report."

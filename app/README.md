@@ -46,6 +46,13 @@ checks its machine-readable role and source revision, and places it under
 builds the supported local Tauri App bundle (without invoking an installer or
 signing flow). It fails clearly when the staged artifact is missing.
 
+Stable packages are produced only by `.github/workflows/release.yml`: an Apple
+Silicon macOS App zip and a Windows x64 NSIS installer. The workflow verifies
+the embedded sidecar from each native package, aggregates checksums and release
+metadata, creates a draft Release, downloads every asset for readback, and only
+then publishes it as stable/latest. See `docs/legacy-runtime-distribution.md`
+and the versioned notes under `docs/releases/`.
+
 ## Live CLI Bridge
 
 The desktop bridge uses:

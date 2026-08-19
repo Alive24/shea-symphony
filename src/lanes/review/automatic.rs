@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
 
@@ -929,14 +928,21 @@ pub(crate) fn render_automatic_review_prompt_for_backend(
         .backend_prompt(fragment_key)
         .map_err(|error| shea_symphony::prompt::PromptError::Context(error.to_string()))?;
     let boundary = if fragment_key == "automatic_review_structured" {
-        let resources = resolve_review_workflow_resources(workflow)
-            .map_err(shea_symphony::prompt::PromptError::Context)?;
+        let resources = workflow
+            .resolved_workflow_capability()
+            .map_err(|error| shea_symphony::prompt::PromptError::Context(error.to_string()))?;
+        let adapter_paths = resources
+            .adapters
+            .iter()
+            .map(|(id, path)| format!("- `{id}`: `{path}`"))
+            .collect::<Vec<_>>()
+            .join("\n");
         render_template_with_values(
             template,
             &[
                 ("capability_path", resources.capability_path),
                 ("active_workflow_path", resources.active_workflow_path),
-                ("adapter_paths", resources.adapter_paths),
+                ("adapter_paths", adapter_paths),
             ],
         )?
     } else {
@@ -945,211 +951,6 @@ pub(crate) fn render_automatic_review_prompt_for_backend(
     prompt.push_str("\n\n");
     prompt.push_str(&boundary);
     Ok(prompt)
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ResolvedReviewWorkflowResources {
-    capability_path: String,
-    active_workflow_path: String,
-    adapter_paths: String,
-}
-
-fn resolve_review_workflow_resources(
-    workflow: &WorkflowDefinition,
-) -> Result<ResolvedReviewWorkflowResources, String> {
-    let closure = workflow.resource_closure.as_ref().ok_or_else(|| {
-        "structured Review requires a resolved workflow resource closure".to_string()
-    })?;
-    let capability_resources = closure
-        .resources
-        .iter()
-        .filter(|resource| resource.kind == "contract")
-        .filter_map(|resource| {
-            let metadata = markdown_front_matter(&resource.path).ok()?;
-            (metadata.get("kind").and_then(serde_yaml::Value::as_str)
-                == Some("shea-workflow-capability"))
-            .then_some((resource, metadata))
-        })
-        .collect::<Vec<_>>();
-    let (capability_resource, capability_metadata) = match capability_resources.as_slice() {
-        [entry] => entry,
-        [] => {
-            return Err(
-                "structured Review resource closure has no workflow capability contract".into(),
-            )
-        }
-        entries => {
-            return Err(format!(
-                "structured Review resource closure has {} workflow capability contracts; expected exactly one",
-                entries.len()
-            ))
-        }
-    };
-    let capability_parent = capability_resource.path.parent().ok_or_else(|| {
-        format!(
-            "workflow capability path has no parent: {}",
-            capability_resource.path.display()
-        )
-    })?;
-    let active_workflow_reference = capability_metadata
-        .get("active_workflow")
-        .and_then(serde_yaml::Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| "workflow capability is missing `active_workflow`".to_string())?;
-    let active_workflow_path = resolve_confined_review_resource(
-        &closure.repository_root,
-        capability_parent,
-        active_workflow_reference,
-        "active workflow",
-    )?;
-    let loaded_workflow_path = fs::canonicalize(&workflow.path).map_err(|error| {
-        format!(
-            "could not canonicalize loaded workflow {}: {error}",
-            workflow.path.display()
-        )
-    })?;
-    if active_workflow_path != loaded_workflow_path {
-        return Err(format!(
-            "workflow capability resolves active workflow to {}, but Review loaded {}",
-            active_workflow_path.display(),
-            loaded_workflow_path.display()
-        ));
-    }
-    if !closure
-        .resources
-        .iter()
-        .any(|resource| resource.kind == "workflow" && resource.path == active_workflow_path)
-    {
-        return Err(format!(
-            "resolved active workflow is outside the enabled resource closure: {}",
-            active_workflow_path.display()
-        ));
-    }
-
-    let adapter_references = capability_metadata
-        .get("adapters")
-        .and_then(serde_yaml::Value::as_sequence)
-        .filter(|entries| !entries.is_empty())
-        .ok_or_else(|| "workflow capability declares no supported adapters".to_string())?;
-    let mut adapter_paths = Vec::new();
-    for adapter_reference in adapter_references {
-        let adapter_id = adapter_reference
-            .get("id")
-            .and_then(serde_yaml::Value::as_str)
-            .filter(|value| !value.trim().is_empty())
-            .ok_or_else(|| "workflow capability adapter is missing `id`".to_string())?;
-        let adapter_reference_path = adapter_reference
-            .get("path")
-            .and_then(serde_yaml::Value::as_str)
-            .filter(|value| !value.trim().is_empty())
-            .ok_or_else(|| {
-                format!("workflow capability adapter `{adapter_id}` is missing `path`")
-            })?;
-        let adapter_path = resolve_confined_review_resource(
-            &closure.repository_root,
-            capability_parent,
-            adapter_reference_path,
-            &format!("adapter `{adapter_id}`"),
-        )?;
-        if !closure
-            .resources
-            .iter()
-            .any(|resource| resource.kind == "adapter" && resource.path == adapter_path)
-        {
-            return Err(format!(
-                "resolved adapter `{adapter_id}` is outside the enabled resource closure: {}",
-                adapter_path.display()
-            ));
-        }
-        let adapter_metadata = markdown_front_matter(&adapter_path)?;
-        if adapter_metadata
-            .get("kind")
-            .and_then(serde_yaml::Value::as_str)
-            != Some("shea-workflow-capability-adapter")
-            || adapter_metadata
-                .get("adapter_id")
-                .and_then(serde_yaml::Value::as_str)
-                != Some(adapter_id)
-        {
-            return Err(format!(
-                "resolved adapter `{adapter_id}` has mismatched capability metadata at {}",
-                adapter_path.display()
-            ));
-        }
-        adapter_paths.push(format!(
-            "- `{adapter_id}`: `{}`",
-            repository_relative_review_path(&closure.repository_root, &adapter_path)?
-        ));
-    }
-
-    Ok(ResolvedReviewWorkflowResources {
-        capability_path: repository_relative_review_path(
-            &closure.repository_root,
-            &capability_resource.path,
-        )?,
-        active_workflow_path: repository_relative_review_path(
-            &closure.repository_root,
-            &active_workflow_path,
-        )?,
-        adapter_paths: adapter_paths.join("\n"),
-    })
-}
-
-fn markdown_front_matter(path: &Path) -> Result<serde_yaml::Value, String> {
-    let source = fs::read_to_string(path)
-        .map_err(|error| format!("could not read {}: {error}", path.display()))?;
-    let source = source
-        .strip_prefix("---\n")
-        .ok_or_else(|| format!("{} is missing YAML front matter", path.display()))?;
-    let (yaml, _) = source
-        .split_once("\n---\n")
-        .ok_or_else(|| format!("{} has unterminated YAML front matter", path.display()))?;
-    serde_yaml::from_str(yaml).map_err(|error| {
-        format!(
-            "could not parse front matter from {}: {error}",
-            path.display()
-        )
-    })
-}
-
-fn resolve_confined_review_resource(
-    repository_root: &Path,
-    declaring_directory: &Path,
-    reference: &str,
-    label: &str,
-) -> Result<PathBuf, String> {
-    let reference_path = Path::new(reference);
-    if reference_path.is_absolute() {
-        return Err(format!(
-            "{label} reference must be repository-relative: {reference}"
-        ));
-    }
-    let resolved = fs::canonicalize(declaring_directory.join(reference_path)).map_err(|error| {
-        format!(
-            "could not resolve {label} reference `{reference}` relative to {}: {error}",
-            declaring_directory.display()
-        )
-    })?;
-    if !resolved.starts_with(repository_root) {
-        return Err(format!(
-            "resolved {label} escapes repository root {}: {}",
-            repository_root.display(),
-            resolved.display()
-        ));
-    }
-    Ok(resolved)
-}
-
-fn repository_relative_review_path(repository_root: &Path, path: &Path) -> Result<String, String> {
-    path.strip_prefix(repository_root)
-        .map(|relative| relative.to_string_lossy().into_owned())
-        .map_err(|_| {
-            format!(
-                "resolved Review resource is outside repository root {}: {}",
-                repository_root.display(),
-                path.display()
-            )
-        })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

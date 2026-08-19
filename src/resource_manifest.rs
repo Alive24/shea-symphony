@@ -33,8 +33,6 @@ pub struct ResourceEntry {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedResourceClosure {
-    /// Canonical repository root used to confine all resolved resources.
-    pub repository_root: PathBuf,
     pub manifest_path: PathBuf,
     pub selected_groups: Vec<String>,
     pub resources: Vec<ResolvedResource>,
@@ -205,7 +203,6 @@ pub fn resolve_resource_closure(
     }
 
     Ok(Some(ResolvedResourceClosure {
-        repository_root,
         manifest_path,
         selected_groups: selected,
         resources,
@@ -324,11 +321,10 @@ mod tests {
 
     #[test]
     fn core_is_always_selected_and_optional_is_omittable() {
-        let (temp, workflow, config) = fixture(&[]);
+        let (_temp, workflow, config) = fixture(&[]);
         let closure = resolve_resource_closure(&workflow, &config)
             .unwrap()
             .unwrap();
-        assert_eq!(closure.repository_root, temp.path().canonicalize().unwrap());
         assert_eq!(closure.selected_groups, vec!["core"]);
         assert_eq!(closure.markdown_sources.len(), 1);
     }

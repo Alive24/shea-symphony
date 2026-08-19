@@ -53,6 +53,6 @@ facts. Production Rust does not duplicate its headings, labels, or rubric.
 
 The structured automatic-Review backend fragment is rendered with exact
 repo-relative capability, active-workflow, and adapter paths resolved and
-confined by `src/lanes/review/automatic.rs` from the enabled resource closure.
+confined by `src/workflow.rs` from the enabled resource closure.
 This keeps Review prose in Markdown while preventing the external model from
 guessing the base directory of frontmatter references.

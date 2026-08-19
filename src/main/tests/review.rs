@@ -133,7 +133,7 @@ fn structured_review_fails_before_launch_without_resolved_capability_resources()
     .unwrap_err()
     .to_string();
 
-    assert!(error.contains("requires a resolved workflow resource closure"));
+    assert!(error.contains("a resolved workflow resource closure is required"));
 }
 
 #[test]
@@ -154,7 +154,7 @@ fn structured_review_fails_before_launch_when_adapter_is_not_enabled() {
     .unwrap_err()
     .to_string();
 
-    assert!(error.contains("adapter `legacy-cli-v1` is outside the enabled resource closure"));
+    assert!(error.contains("adapter `legacy-cli-v1` is outside resource closure"));
 }
 
 #[test]

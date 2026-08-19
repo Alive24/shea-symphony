@@ -381,6 +381,8 @@ fn run_loop_handoff_workpad_records_planned_pr_evidence() {
     assert!(workpad.contains("### Work Log"));
     assert!(workpad.contains("- [x] Read the issue contract"));
     assert!(workpad.contains("### PR / Linkage"));
+    assert!(workpad.contains("### Documentation Impact"));
+    assert!(workpad.contains("Human Review must compare the Issue declaration"));
     assert!(workpad.contains("Actor role: `implementation_agent`"));
     assert!(workpad.contains("Git identity: `applied:Shea Symphony Agent <shea@example.invalid>`"));
     assert!(

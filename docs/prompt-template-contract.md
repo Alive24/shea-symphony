@@ -3,7 +3,9 @@
 Status: strict Liquid-compatible rendering.
 
 Shea Symphony renders workflow lane prompts, selected backend fragments, and
-configured runtime templates before launching agents or writing evidence. Rendering uses the Rust
+configured runtime templates before launching agents or writing evidence. The
+workflow-selected executable-Issue template additionally owns Issue layout and
+same-file semantic validation intent. Rendering uses the Rust
 `liquid` engine with the standard Liquid tag and filter library, plus Shea's
 strict external-context validation.
 
@@ -17,6 +19,12 @@ Prompt templates receive:
 Workpad templates receive the named values supplied by the caller for that
 workpad surface, such as `issue_ref`, `issue_title`, `run_id`, `target_state`,
 or `evidence_summary`.
+
+The executable-Issue template receives typed Forge inputs including goal,
+assignee, dependency/context facts, documentation impact, repository references,
+scope, risks, outcomes, and verification. Boolean inputs support optional
+sections. Its raw `{% comment %}` block carries trusted semantic intent and is
+not present in the rendered Issue.
 
 Backend fragments are repository Markdown. Static fragments receive no dynamic
 context; Merge repair receives only typed conflict facts such as `pr_ref`,
@@ -75,10 +83,12 @@ missing data, tolerate misspelled filters, or write partial workpad evidence.
 - `prompt_renderer=strict-liquid-compatible`;
 - `prompt_template_smoke.<lane>=pass` for each configured lane prompt;
 - `backend_prompt_source.<id>=...` with the exact selected Markdown path;
+- `issue_template.executable=... smoke=pass` with selected and rendered bytes;
 - `workpad_template.<id>=... smoke=pass` for every configured or centralized
   workpad/evidence template;
 - `resource_manifest=... groups=...` and each exact
   `resource_markdown_source=...` from the enabled closure.
 
 Any parse error, unknown filter, or unknown external variable in a configured
-prompt or workpad template makes validation fail.
+prompt, executable-Issue, or workpad template makes validation fail. Rendered
+executable Issues also fail when Liquid syntax remains unresolved.

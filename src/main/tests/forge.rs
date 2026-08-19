@@ -1,18 +1,6 @@
 use super::*;
 
 #[test]
-fn issue_contract_assignees_parse_setup_field() {
-    assert_eq!(
-        issue_contract_assignees("- Assignee: @Alive24\n- UAT Required: Yes"),
-        vec!["Alive24".to_string()]
-    );
-    assert_eq!(
-        issue_contract_assignees("- Assignees: Alive24, codex\n"),
-        vec!["Alive24".to_string(), "codex".to_string()]
-    );
-}
-
-#[test]
 fn rework_transition_writes_diagnostic_before_state_change() {
     let adapter = RecordingAdapter::default();
     let issue = tracker_issue("Agent Review");
@@ -266,9 +254,9 @@ fn validates_forge_create_contract_before_tracker_write() {
         validate_forge_create_contract("Create issue", &forge_contract(), &config, &[]).is_ok()
     );
 
-    let error =
-        validate_forge_create_contract("Thin issue", "make it better", &config, &[]).unwrap_err();
-    assert!(error.contains("tracker issue was not created"));
+    let report =
+        validate_forge_create_contract("Thin issue", "make it better", &config, &[]).unwrap();
+    assert!(report.decision.is_dispatchable());
 }
 
 #[test]
@@ -333,7 +321,7 @@ fn forge_validate_candidate_context_reports_candidate_gaps_separately() {
     let report = forge_validation_report(
         ForgeStatusArg::Todo,
         "Thin issue",
-        "make forge better",
+        "{{ unresolved_candidate_input }}",
         &config,
         &assignees,
     )
@@ -597,14 +585,14 @@ fn memory_workflow_with_backlog_issue() -> (tempfile::TempDir, PathBuf) {
 }
 
 #[test]
-fn forge_todo_promotion_rejects_issue_setup_blocker_without_relationship_plan() {
+fn disabled_semantic_gate_does_not_parse_dependency_prose_in_rust() {
     let (_temp, workflow_path) = memory_workflow_with_backlog_issue();
     let body = forge_contract().replace(
         "- UAT Required: No",
         "- UAT Required: No\n- Dependencies: Blocked By: #358 must finish before this issue dispatches.",
     );
 
-    let error = forge_promote(ForgePromoteInput {
+    forge_promote(ForgePromoteInput {
         workflow_path,
         issue_ref: "#360".into(),
         title: "Promoted child".into(),
@@ -614,11 +602,7 @@ fn forge_todo_promotion_rejects_issue_setup_blocker_without_relationship_plan() 
         write: false,
         dry_run: true,
     })
-    .unwrap_err()
-    .to_string();
-
-    assert!(error.contains("forge promote stopped at validate"));
-    assert!(error.contains("promoted body failed Todo gate"));
+    .unwrap();
 }
 
 #[test]

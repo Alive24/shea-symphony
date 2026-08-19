@@ -60,6 +60,8 @@ backend_prompts:
   automatic_review_structured: ../prompts/backend/automatic-review-structured.md
   claude_code_review: ../prompts/backend/claude-code-review.md
   merge_repair: ../prompts/backend/merge-repair.md
+issue_templates:
+  executable: ../template/issue/executable.md
 workpad_templates:
   main_handoff: ../template/workpad/main-handoff.md
   main_handoff_failure: ../template/workpad/main-handoff-failure.md

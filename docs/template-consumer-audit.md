@@ -7,6 +7,7 @@ closure.
 
 | Template path | Typed/runtime consumer | Lifecycle reason |
 | --- | --- | --- |
+| `template/issue/executable.md` | `src/issue_templates.rs`, `src/issue_forge.rs`, `src/commands/gate.rs` | Single executable-Issue layout and same-file semantic-intent owner |
 | `template/workpad/main-handoff.md` | `src/lanes/main_loop/handoff.rs` | Canonical stable Main sections |
 | `template/workpad/main-handoff-failure.md` | `src/lanes/main_loop/handoff.rs` | Stable Main recovery receipt |
 | `template/workpad/main-assignee-ownership.md` | `src/lanes/main_loop/handoff.rs` | Pre-claim ownership receipt |
@@ -44,3 +45,8 @@ readback, and adoption versus ensure has different workspace authority.
 The six Main receipts remain separate small sources because the section-aware
 canonical workpad merger updates their stable sections independently. Combining
 them into one conditional template would obscure accepted lifecycle boundaries.
+
+The executable-Issue source is deliberately separate from workpads: Forge
+renders its visible layout, while the optional semantic model gate receives the
+trusted raw source alongside an explicitly untrusted candidate and deterministic
+facts. Production Rust does not duplicate its headings, labels, or rubric.

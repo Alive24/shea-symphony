@@ -456,33 +456,17 @@ pub(crate) fn forge_validate(
         };
         (status, title, markdown, issue.assignees)
     } else {
-        let assignees = issue_contract_assignees(&markdown);
         (
             status.unwrap_or(ForgeStatusArg::Todo),
             title,
             markdown,
-            assignees,
+            Vec::new(),
         )
     };
     let report = forge_validation_report(status, &title, &markdown, &config, &assignees)?;
     print_forge_validation(&report);
     println!("status={}", status.as_str());
     Ok(())
-}
-
-pub(crate) fn issue_contract_assignees(markdown: &str) -> Vec<String> {
-    markdown
-        .lines()
-        .filter_map(|line| {
-            let trimmed = line.trim().trim_start_matches('-').trim();
-            trimmed
-                .strip_prefix("Assignee:")
-                .or_else(|| trimmed.strip_prefix("Assignees:"))
-        })
-        .flat_map(|value| value.split(','))
-        .map(|assignee| assignee.trim().trim_start_matches('@').to_string())
-        .filter(|assignee| !assignee.is_empty() && !assignee.eq_ignore_ascii_case("none"))
-        .collect()
 }
 
 pub(crate) fn forge_validation_report(

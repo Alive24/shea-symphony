@@ -28,6 +28,7 @@ pub struct RuntimeConfig {
     pub tmux: TmuxConfig,
     pub review: ReviewConfig,
     pub merge_lane: MergeLaneConfig,
+    pub issue_templates: IssueTemplatesConfig,
     pub quality_gate: QualityGateConfig,
     pub verification: VerificationConfig,
     pub profiles: ProfilesConfig,
@@ -218,6 +219,13 @@ pub struct ReviewConfig {
 pub struct MergeLaneConfig {
     pub max_concurrent_workers: usize,
     pub agent_backend: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Repository-owned executable-Issue template selection.
+pub struct IssueTemplatesConfig {
+    /// Exact strict-Liquid Markdown source used by Forge and the quality gate.
+    pub executable: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -480,6 +488,7 @@ impl RuntimeConfig {
             agent_backend: get_string(merge_lane_config, "agent_backend")
                 .unwrap_or_else(|| "codex".to_string()),
         };
+        let issue_templates = parse_issue_templates(root.get("issue_templates"), workflow_dir);
         let quality_gate = parse_quality_gate(root.get("quality_gate"));
         let verification = parse_verification(root.get("verification"));
         let profiles = parse_profiles(root.get("profiles"), workflow_dir);
@@ -518,6 +527,7 @@ impl RuntimeConfig {
             tmux,
             review,
             merge_lane,
+            issue_templates,
             quality_gate,
             verification,
             profiles,
@@ -881,6 +891,20 @@ fn parse_quality_gate(value: Option<&Value>) -> QualityGateConfig {
             timeout_ms: get_u64(llm, "timeout_ms").unwrap_or(120_000),
         },
     }
+}
+
+fn parse_issue_templates(value: Option<&Value>, workflow_dir: &Path) -> IssueTemplatesConfig {
+    let configured = get_string(value, "executable")
+        .map(|path| resolve_path(Some(&path), workflow_dir, Path::new("")));
+    let repository_candidate = workflow_dir.join("../template/issue/executable.md");
+    let executable = configured.unwrap_or_else(|| {
+        if repository_candidate.is_file() {
+            repository_candidate
+        } else {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".shea/template/issue/executable.md")
+        }
+    });
+    IssueTemplatesConfig { executable }
 }
 
 fn parse_verification(value: Option<&Value>) -> VerificationConfig {
@@ -1740,6 +1764,30 @@ mod tests {
         );
         assert_eq!(config.quality_gate.llm.timeout_ms, 5_000);
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn parses_workflow_selected_executable_issue_template() {
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/repository/.shea/workflows/target.md",
+            "---\ntracker:\n  kind: memory\nissue_templates:\n  executable: ../template/issue/custom.md\n---\nPrompt",
+        )
+        .unwrap_err();
+        assert!(workflow
+            .to_string()
+            .contains("missing executable-Issue template"));
+
+        let workflow = WorkflowDefinition::parse(
+            "/tmp/WORKFLOW.md",
+            "---\ntracker:\n  kind: memory\n---\nPrompt",
+        )
+        .unwrap();
+        let config =
+            RuntimeConfig::from_workflow(&workflow, Path::new("/tmp/WORKFLOW.md")).unwrap();
+        assert!(config
+            .issue_templates
+            .executable
+            .ends_with(".shea/template/issue/executable.md"));
     }
 
     #[test]

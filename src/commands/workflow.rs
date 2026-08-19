@@ -1,6 +1,9 @@
 use std::path::PathBuf;
 
 use shea_symphony::config::RuntimeConfig;
+use shea_symphony::issue_templates::{
+    executable_issue_smoke_values, load_executable_issue_template, render_executable_issue_template,
+};
 use shea_symphony::model::TrackerIssue;
 use shea_symphony::progress::run_with_progress_heartbeat;
 use shea_symphony::prompt::smoke_render_prompt;
@@ -92,6 +95,15 @@ pub(crate) fn validate(workflow_path: PathBuf) -> Result<(), Box<dyn std::error:
             prompt.len()
         );
     }
+    let issue_template = load_executable_issue_template(&config)?;
+    let issue_template_smoke =
+        render_executable_issue_template(&issue_template, &executable_issue_smoke_values())?;
+    println!(
+        "issue_template.executable=workflow_template_file path={} bytes={} rendered_bytes={} smoke=pass",
+        issue_template.path.display(),
+        issue_template.body.len(),
+        issue_template_smoke.len()
+    );
     let workpad_smoke_values = validate_workpad_smoke_values();
     for template in workpad_template_readback(&workflow) {
         let diagnostic = template
@@ -202,6 +214,7 @@ fn validate_workpad_smoke_values() -> Vec<(&'static str, String)> {
         "current_state",
         "decision",
         "doctor_findings",
+        "documentation_impact",
         "error",
         "event",
         "evidence",

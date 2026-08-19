@@ -44,12 +44,28 @@ pub fn render_template_with_values(
     render_strict_liquid(template, &context)
 }
 
+/// Render a repository-owned Liquid template from a typed JSON context.
+///
+/// External variables remain strict: every referenced path must exist in
+/// `values`, while Liquid-created locals continue to work normally. This is
+/// the shared boundary for templates that need booleans, arrays, or nested
+/// deterministic facts instead of the flat string context used by workpads.
+pub fn render_template_with_json(template: &str, values: &Value) -> Result<String, PromptError> {
+    let context = liquid_context(values)?;
+    render_strict_liquid(template, &context)
+}
+
 pub fn smoke_render_prompt(template: &str, issue: &TrackerIssue) -> Result<(), PromptError> {
     render_prompt(template, issue, Some(1)).map(|_| ())
 }
 
 pub fn smoke_render_template(template: &str, values: &[(&str, String)]) -> Result<(), PromptError> {
     render_template_with_values(template, values).map(|_| ())
+}
+
+/// Smoke-render a repository-owned Liquid template with typed JSON values.
+pub fn smoke_render_template_with_json(template: &str, values: &Value) -> Result<(), PromptError> {
+    render_template_with_json(template, values).map(|_| ())
 }
 
 pub fn render_strict_liquid(
@@ -390,5 +406,16 @@ mod tests {
             render_prompt("{% if issue.title %}missing endif", &issue(), None).unwrap_err(),
             PromptError::Parse(_)
         ));
+    }
+
+    #[test]
+    fn renders_typed_json_booleans_and_arrays() {
+        let rendered = render_template_with_json(
+            "{% if enabled %}{{ values | join: ',' }}{% endif %}",
+            &serde_json::json!({"enabled": true, "values": ["a", "b"]}),
+        )
+        .unwrap();
+
+        assert_eq!(rendered, "a,b");
     }
 }

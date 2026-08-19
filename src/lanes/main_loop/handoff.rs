@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use shea_symphony::agent::UsageLimitPause;
 use shea_symphony::config::RuntimeConfig;
@@ -708,6 +709,8 @@ pub(crate) fn run_loop_handoff_workpad(
         live_handoff_workpad_line(result),
     ]
     .join("\n");
+    let documentation_impact =
+        documentation_impact_evidence(&result.workspace_path, &handoff.pull_request.base_branch);
 
     render_workpad_template(
         workflow,
@@ -723,6 +726,7 @@ pub(crate) fn run_loop_handoff_workpad(
             ),
             ("message", result.message.clone()),
             ("run_evidence", run_evidence),
+            ("documentation_impact", documentation_impact),
             ("planned_handoff", planned_handoff),
             (
                 "runtime_ownership_marker",
@@ -733,6 +737,50 @@ pub(crate) fn run_loop_handoff_workpad(
         ],
     )
     .expect("centralized main handoff workpad template must render")
+}
+
+fn documentation_impact_evidence(workspace_path: &Path, base_branch: &str) -> String {
+    let comparison = format!("{base_branch}...HEAD");
+    let output = Command::new("git")
+        .args(["diff", "--name-only", &comparison])
+        .current_dir(workspace_path)
+        .output();
+    let Ok(output) = output else {
+        return "- Actual documentation changes: `unavailable` (git diff could not start).\n- Unresolved reconciliation: Human Review must compare the Issue declaration with the PR diff.".into();
+    };
+    if !output.status.success() {
+        return format!(
+            "- Actual documentation changes: `unavailable` (git diff status {}).\n- Unresolved reconciliation: Human Review must compare the Issue declaration with the PR diff.",
+            output.status.code().unwrap_or(-1)
+        );
+    }
+    let mut files = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter(|path| documentation_path(path))
+        .take(20)
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    files.sort();
+    files.dedup();
+    let changed = if files.is_empty() {
+        "none observed in the bounded final diff".to_string()
+    } else {
+        files
+            .iter()
+            .map(|path| format!("`{path}`"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    format!(
+        "- Actual documentation changes (bounded to 20 paths): {changed}.\n- Unresolved reconciliation: Human Review must compare the Issue declaration, this evidence, and the PR diff; `shea-docs` is optional."
+    )
+}
+
+fn documentation_path(path: &str) -> bool {
+    path.ends_with(".md")
+        || path.starts_with("docs/")
+        || path.starts_with(".agents/")
+        || path.starts_with(".shea/template/")
 }
 
 fn branch_target_workpad_line(handoff: &IssueHandoffPlan) -> String {

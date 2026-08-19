@@ -98,6 +98,13 @@ pub enum WorkflowError {
         path: PathBuf,
         source: std::io::Error,
     },
+    #[error("invalid executable-Issue template configuration: {0}")]
+    InvalidIssueTemplateConfig(String),
+    #[error("missing executable-Issue template at {path}: {source}")]
+    MissingIssueTemplate {
+        path: PathBuf,
+        source: std::io::Error,
+    },
     #[error("invalid installable resource closure: {0}")]
     ResourceManifest(#[from] ResourceManifestError),
 }
@@ -128,6 +135,7 @@ impl WorkflowDefinition {
         let resource_closure = resolve_resource_closure(path.as_ref(), &config)?;
         let lane_prompt_bundle = load_lane_prompts(path.as_ref(), &config, &workflow_index)?;
         let backend_prompt_bundle = load_backend_prompts(path.as_ref(), &config)?;
+        validate_issue_template(path.as_ref(), &config)?;
         validate_workpad_templates(path.as_ref(), &config)?;
 
         Ok(Self {
@@ -173,6 +181,52 @@ impl WorkflowDefinition {
     pub fn backend_prompt_source(&self, key: &str) -> Option<&PromptTemplateSource> {
         self.backend_prompt_sources.get(key)
     }
+}
+
+fn validate_issue_template(workflow_path: &Path, config: &Value) -> Result<(), WorkflowError> {
+    let Some(value) = config.get("issue_templates") else {
+        return Ok(());
+    };
+    let templates = value.as_object().ok_or_else(|| {
+        WorkflowError::InvalidIssueTemplateConfig(
+            "issue_templates must be a map/object with exactly `executable`".into(),
+        )
+    })?;
+    if templates.len() != 1 || !templates.contains_key("executable") {
+        return Err(WorkflowError::InvalidIssueTemplateConfig(
+            "issue_templates must select exactly one `executable` Markdown file".into(),
+        ));
+    }
+    let relative = templates["executable"]
+        .as_str()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            WorkflowError::InvalidIssueTemplateConfig(
+                "issue_templates.executable must name a repository Markdown file".into(),
+            )
+        })?;
+    let path = resolve_workflow_relative_path(workflow_path, relative);
+    let body = fs::read_to_string(&path).map_err(|source| WorkflowError::MissingIssueTemplate {
+        path: path.clone(),
+        source,
+    })?;
+    if body.trim().is_empty() {
+        return Err(WorkflowError::InvalidIssueTemplateConfig(format!(
+            "issue_templates.executable is empty at {}; restore the selected resource",
+            path.display()
+        )));
+    }
+    liquid::ParserBuilder::with_stdlib()
+        .build()
+        .map_err(|error| WorkflowError::InvalidIssueTemplateConfig(error.to_string()))?
+        .parse(&body)
+        .map_err(|error| {
+            WorkflowError::InvalidIssueTemplateConfig(format!(
+                "issue_templates.executable is invalid at {}: {error}",
+                path.display()
+            ))
+        })?;
+    Ok(())
 }
 
 fn validate_workpad_templates(workflow_path: &Path, config: &Value) -> Result<(), WorkflowError> {
@@ -690,6 +744,54 @@ mod tests {
             assert!(error.contains(expected), "unexpected error: {error}");
             assert!(error.contains(key), "unexpected error: {error}");
         }
+    }
+
+    #[test]
+    fn configured_executable_issue_template_is_exactly_one_and_fail_closed() {
+        let temp = tempfile::tempdir().unwrap();
+        let workflow_path = temp.path().join("WORKFLOW.md");
+        fs::write(temp.path().join("issue.md"), "## Goal\n{{ goal }}").unwrap();
+        let workflow = WorkflowDefinition::parse(
+            &workflow_path,
+            "---\nissue_templates:\n  executable: issue.md\n---\nWorkflow index",
+        )
+        .unwrap();
+        assert_eq!(workflow.config["issue_templates"]["executable"], "issue.md");
+
+        for (config, expected) in [
+            (
+                "issue_templates:\n  executable: missing.md",
+                "missing executable-Issue template",
+            ),
+            (
+                "issue_templates:\n  executable: issue.md\n  duplicate: issue.md",
+                "exactly one",
+            ),
+        ] {
+            let source = format!("---\n{config}\n---\nWorkflow index");
+            let error = WorkflowDefinition::parse(&workflow_path, &source)
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(expected), "unexpected error: {error}");
+        }
+
+        fs::write(temp.path().join("issue.md"), "{% if open %}").unwrap();
+        let error = WorkflowDefinition::parse(
+            &workflow_path,
+            "---\nissue_templates:\n  executable: issue.md\n---\nWorkflow index",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("is invalid"));
+
+        fs::write(temp.path().join("issue.md"), " \n").unwrap();
+        let error = WorkflowDefinition::parse(
+            &workflow_path,
+            "---\nissue_templates:\n  executable: issue.md\n---\nWorkflow index",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("is empty"));
     }
 
     #[test]

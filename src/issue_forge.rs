@@ -1,5 +1,9 @@
 use serde::{Deserialize, Serialize};
 
+use crate::issue_templates::{
+    load_repository_executable_issue_template, render_executable_issue_template,
+    ExecutableIssueTemplate,
+};
 use crate::model::{GateDecision, GateDecisionKind, TrackerIssue};
 use crate::quality_gate::evaluate_issue;
 
@@ -57,7 +61,6 @@ pub struct IssueForgeSkill {
     pub description: String,
     pub knowledge_sources: Vec<String>,
     pub code_paths: Vec<String>,
-    pub guardrails: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -119,10 +122,6 @@ pub fn issue_skill_registry() -> Vec<IssueForgeSkill> {
                 "src/runtime_state.rs".into(),
                 "src/orchestrator.rs".into(),
             ],
-            guardrails: vec![
-                "Main implementation work must stop at Agent Review.".into(),
-                "Preserve dry-run behavior and bounded-loop controls.".into(),
-            ],
         },
         IssueForgeSkill {
             key: "tracker".into(),
@@ -135,10 +134,6 @@ pub fn issue_skill_registry() -> Vec<IssueForgeSkill> {
                 ".shea/contracts/workflow-capability.v1.md".into(),
             ],
             code_paths: vec!["src/tracker.rs".into(), "src/config.rs".into()],
-            guardrails: vec![
-                "Keep GitHub Project v2 and Linear behind the normalized tracker adapter.".into(),
-                "Do not mutate tracker state without explicit --write.".into(),
-            ],
         },
         IssueForgeSkill {
             key: "backend".into(),
@@ -149,10 +144,6 @@ pub fn issue_skill_registry() -> Vec<IssueForgeSkill> {
                 "docs/claude-code-stream-json.md".into(),
             ],
             code_paths: vec!["src/agent.rs".into(), "src/prompt.rs".into()],
-            guardrails: vec![
-                "Keep Codex and Claude Code behind the normalized backend boundary.".into(),
-                "Keep dry-run backend safe for tests.".into(),
-            ],
         },
         IssueForgeSkill {
             key: "review".into(),
@@ -164,11 +155,6 @@ pub fn issue_skill_registry() -> Vec<IssueForgeSkill> {
                 ".shea/contracts/workflow-capability.v1.md".into(),
             ],
             code_paths: vec!["src/review.rs".into(), "src/main.rs".into()],
-            guardrails: vec![
-                "Main implementation agent must never set Human Review.".into(),
-                "Failed, unavailable, or inconclusive review must not advance to Human Review."
-                    .into(),
-            ],
         },
         IssueForgeSkill {
             key: "docs".into(),
@@ -180,10 +166,6 @@ pub fn issue_skill_registry() -> Vec<IssueForgeSkill> {
                 ".agents/skills/shea-issue-forge/references/contract.md".into(),
             ],
             code_paths: vec!["README.md".into(), "docs/README.md".into()],
-            guardrails: vec![
-                "Keep docs honest about dry-run, stubbed, and live behavior.".into(),
-                "Do not claim full autonomous orchestration before controlled live proof.".into(),
-            ],
         },
         IssueForgeSkill {
             key: "integration-test".into(),
@@ -198,10 +180,6 @@ pub fn issue_skill_registry() -> Vec<IssueForgeSkill> {
                 "tests/fixtures/".into(),
                 "tests/".into(),
                 "src/tracker.rs".into(),
-            ],
-            guardrails: vec![
-                "Keep live tests credential-gated and safe to skip locally.".into(),
-                "Preserve fixture-backed dry-run coverage.".into(),
             ],
         },
     ]
@@ -265,8 +243,18 @@ pub fn conversational_title_from_intent(intent: &str) -> String {
 }
 
 pub fn interactive_forge(input: InteractiveForgeInput) -> InteractiveForgeReport {
+    let template = load_repository_executable_issue_template()
+        .expect("repository executable-Issue template must load");
+    interactive_forge_with_template(input, &template)
+}
+
+/// Build a Forge candidate from an active workflow's selected template.
+pub fn interactive_forge_with_template(
+    input: InteractiveForgeInput,
+    template: &ExecutableIssueTemplate,
+) -> InteractiveForgeReport {
     let selected_skill = select_issue_skill(&input.intent, input.skill.as_deref());
-    let issue_markdown = issue_markdown_from_interactive_input(&input, &selected_skill);
+    let issue_markdown = issue_markdown_from_interactive_input(&input, &selected_skill, template);
     let validation = validate_markdown(&input.title, &issue_markdown);
     let question = focused_interactive_question(&input, &selected_skill, &validation);
 
@@ -339,12 +327,19 @@ pub fn validate_markdown(title: &str, markdown: &str) -> ForgeValidationReport {
 }
 
 pub fn repair_markdown(title: &str, markdown: &str) -> RepairReport {
+    let template = load_repository_executable_issue_template()
+        .expect("repository executable-Issue template must load");
+    repair_markdown_with_template(title, markdown, &template)
+}
+
+/// Repair rough input through an active workflow's selected template.
+pub fn repair_markdown_with_template(
+    title: &str,
+    markdown: &str,
+    template: &ExecutableIssueTemplate,
+) -> RepairReport {
     let validation = validate_markdown(title, markdown);
-    let repaired_markdown = if validation.decision.is_dispatchable() {
-        record_gate_notes(markdown, &validation.decision)
-    } else {
-        repaired_draft(title, markdown, &validation.decision)
-    };
+    let repaired_markdown = repaired_draft(title, markdown, &validation.decision, template);
 
     RepairReport {
         validation,
@@ -353,101 +348,10 @@ pub fn repair_markdown(title: &str, markdown: &str) -> RepairReport {
 }
 
 pub fn draft_from_template(title: &str, goal: &str) -> String {
-    format!(
-        r#"## Issue Setup
-
-- UAT Required: No
-- Related Parent Issue or Context: 
-
-## Issue Goal
-
-{goal}
-
-## Why Now
-
-TBD
-
-## Issue Context
-
-TBD
-
-## Decisions / Assumptions
-
-### Decisions
-
-- TBD
-
-### Assumptions
-
-- TBD
-
-## Dependencies
-
-- No blocking dependencies identified yet.
-
-## Non-Negotiable Guardrails
-
-- Keep Shea Symphony orchestration infrastructure separate from downstream product business logic.
-
-## Scope
-
-### In Scope
-
-- {title}
-
-### Out of Scope
-
-- Unrelated product business logic.
-
-## Canonical References
-
-### Target Repository / Package
-
-- TBD
-
-### Relevant Knowledge Sources
-
-- TBD
-
-### Relevant Code Paths
-
-- TBD
-
-## Current State
-
-TBD
-
-## Deliverable Shape
-
-TBD
-
-## Risks or Constraints
-
-- TBD
-
-## Expected Outcome
-
-- [ ] TBD
-
-## Verification
-
-### Completion Criteria
-
-- [ ] TBD
-
-### Functional Verification
-
-- [ ] TBD
-
-### UAT
-
-- [ ] Not required unless the issue becomes operator-observable.
-
-### Context Verification
-
-- [ ] Confirm the issue still matches canonical sources.
-"#
-    )
+    let template = load_repository_executable_issue_template()
+        .expect("repository executable-Issue template must load");
+    render_executable_issue_template(&template, &draft_values(title, goal, None, false))
+        .expect("repository executable-Issue template must render")
 }
 
 fn title_from_intent(intent: &str) -> String {
@@ -467,117 +371,37 @@ fn title_from_intent(intent: &str) -> String {
 fn issue_markdown_from_interactive_input(
     input: &InteractiveForgeInput,
     skill: &IssueForgeSkill,
+    template: &ExecutableIssueTemplate,
 ) -> String {
-    let mut draft = draft_from_template(&input.title, input.intent.trim());
-    draft = draft.replace(
-        "- UAT Required: No",
-        &format!(
-            "- UAT Required: No\n- Assignee: {}",
-            format_interactive_assignee(input)
-        ),
-    );
-    draft = draft.replace(
-        "## Why Now\n\nTBD",
-        "## Why Now\n\nThis follow-up is needed to continue turning Shea Symphony from a dry-run skeleton into a usable orchestration binary.",
-    );
-    draft = draft.replace(
-        "## Issue Context\n\nTBD",
-        &format_interactive_context(input, skill),
-    );
-    draft = draft.replace(
-        "### Decisions\n\n- TBD",
-        &format!(
-            "### Decisions\n\n- Use the `{}` Issue Forge skill as the starting contract shape.\n- Keep the implementation focused to this issue and create follow-ups for broader work.",
-            skill.key
-        ),
-    );
-    draft = draft.replace(
-        "### Assumptions\n\n- TBD",
-        "### Assumptions\n\n- The existing Issue Quality Gate remains the acceptance boundary for generated tracker issues.",
-    );
-    draft = draft.replace(
-        "## Dependencies\n\n- No blocking dependencies identified yet.",
-        &format_interactive_dependencies(input),
-    );
-    draft = draft.replace(
-        "## Non-Negotiable Guardrails\n\n- Keep Shea Symphony orchestration infrastructure separate from downstream product business logic.",
-        &format!(
-            "## Non-Negotiable Guardrails\n\n- Keep Shea Symphony orchestration infrastructure separate from downstream product business logic.\n{}",
-            skill
-                .guardrails
-                .iter()
-                .map(|guardrail| format!("- {guardrail}"))
-                .collect::<Vec<_>>()
-                .join("\n")
-        ),
-    );
-    draft = draft.replace(
-        &format!("### In Scope\n\n- {}", input.title),
-        &format!(
-            "### In Scope\n\n- Implement the smallest executable slice for: {}.\n- Update tests and docs that directly describe this capability.",
-            input.title
-        ),
-    );
-    draft = draft.replace(
-        "### Target Repository / Package\n\n- TBD",
-        "### Target Repository / Package\n\n- Alive24/shea-symphony",
-    );
-    draft = draft.replace(
-        "### Relevant Knowledge Sources\n\n- TBD",
-        &format!(
-            "### Relevant Knowledge Sources\n\n{}",
-            skill
-                .knowledge_sources
-                .iter()
-                .map(|source| format!("- {source}"))
-                .collect::<Vec<_>>()
-                .join("\n")
-        ),
-    );
-    draft = draft.replace(
-        "### Relevant Code Paths\n\n- TBD",
-        &format!(
-            "### Relevant Code Paths\n\n{}",
-            skill
-                .code_paths
-                .iter()
-                .map(|path| format!("- {path}"))
-                .collect::<Vec<_>>()
-                .join("\n")
-        ),
-    );
-    draft = draft.replace(
-        "## Current State\n\nTBD",
-        "## Current State\n\nOperator intent has been captured by Issue Forge and shaped into a quality-gated issue contract.",
-    );
-    draft = draft.replace(
-        "## Deliverable Shape\n\nTBD",
-        "## Deliverable Shape\n\nA focused code, test, fixture, or documentation change matching the selected Issue Forge skill.",
-    );
-    draft = draft.replace(
-        "## Risks or Constraints\n\n- TBD",
-        "## Risks or Constraints\n\n- Do not expand this issue into unrelated roadmap or product work.\n- Keep live external mutations behind explicit `--write` flags.",
-    );
-    draft = draft.replace(
-        "## Expected Outcome\n\nTBD",
-        "## Expected Outcome\n\n- [ ] A locally verifiable slice that can be handed from main implementation to Agent Review.",
-    );
-    draft = draft.replace(
-        "### Completion Criteria\n\n- TBD",
-        "### Completion Criteria\n\n- [ ] The issue contract passes `shea-symphony forge validate`.\n- [ ] Implementation and documentation are limited to the issue scope.",
-    );
-    draft = draft.replace(
-        "### Functional Verification\n\n- TBD",
-        "### Functional Verification\n\n- [ ] Run `cargo test`.\n- [ ] Run `cargo fmt --check`.\n- [ ] Run `cargo clippy --all-targets --all-features -- -D warnings`.",
-    );
-    draft = draft.replace(
-        "### Context Verification\n\n- Confirm the issue still matches canonical sources.",
-        "### Context Verification\n\n- [ ] Confirm the issue still matches canonical sources and Project #9 state before dispatch.",
-    );
-    if parent_subissue_batch_signal(input) {
-        draft = apply_parent_subissue_contract_defaults(draft);
-    }
-    draft
+    let parent_subissue = parent_subissue_batch_signal(input);
+    let values = serde_json::json!({
+        "uat_required": if parent_subissue { "Yes" } else { "No" },
+        "assignee": format_interactive_assignee(input),
+        "dependencies": format_interactive_dependencies(input),
+        "documentation_impact": "Update tests and documentation that directly describe the accepted capability.",
+        "related_context": input.context.as_deref().unwrap_or("None recorded"),
+        "parent_subissue": parent_subissue,
+        "goal": input.intent.trim(),
+        "why_now": "This follow-up is needed to make the requested repository behavior executable.",
+        "target_repository": "- `Alive24/shea-symphony`",
+        "context": format_interactive_context(input, skill),
+        "guardrails": format!("- Keep the implementation within the selected `{}` surface.\n- Keep external mutations behind explicit guarded write authority.", skill.key),
+        "in_scope": format!("- Implement the smallest executable slice for: {}.\n- Update focused tests and directly affected documentation.", input.title),
+        "out_of_scope": "- Unrelated product or roadmap work.",
+        "knowledge_sources": markdown_bullets(&skill.knowledge_sources),
+        "code_paths": markdown_bullets(&skill.code_paths),
+        "current_state": "Operator intent has been captured by Issue Forge; implementation evidence remains to be gathered.",
+        "code_state_freshness": "Refresh the target branch and relevant relationships before dispatch.",
+        "deliverable_shape": "A focused code, test, fixture, or documentation change matching the accepted scope.",
+        "risks": "- Do not widen scope without a separate follow-up.\n- Preserve guarded mutation and readback boundaries.",
+        "expected_outcome": "- [ ] A locally verifiable slice is ready for independent Agent Review.",
+        "completion_criteria": "- [ ] The candidate passes the configured deterministic and semantic gate modes.\n- [ ] Implementation and documentation stay within accepted scope.",
+        "functional_verification": "- [ ] `cargo test`\n- [ ] `cargo fmt --check`\n- [ ] `cargo clippy --all-targets --all-features -- -D warnings`",
+        "uat": "- [ ] Complete operator UAT when the change is observable; otherwise record why it is not required.",
+        "context_verification": "- [ ] Confirm current base, native relationships, and relevant recent work before dispatch."
+    });
+    render_executable_issue_template(template, &values)
+        .expect("selected executable-Issue template must render")
 }
 
 fn format_interactive_assignee(input: &InteractiveForgeInput) -> String {
@@ -591,8 +415,6 @@ fn format_interactive_assignee(input: &InteractiveForgeInput) -> String {
 
 fn format_interactive_context(input: &InteractiveForgeInput, skill: &IssueForgeSkill) -> String {
     let mut lines = vec![
-        "## Issue Context".to_string(),
-        String::new(),
         format!(
             "- Selected Issue Forge skill: `{}` ({})",
             skill.key, skill.label
@@ -621,12 +443,11 @@ fn format_interactive_dependencies(input: &InteractiveForgeInput) -> String {
         .join(" ");
     if dependency_signal(&dependency_source) {
         format!(
-            "## Dependencies\n\n- Potential dependency requires operator confirmation: {}",
+            "Potential dependency requires operator confirmation: {}",
             dependency_source.trim()
         )
     } else {
-        "## Dependencies\n\n- No blocking dependencies identified by Issue Forge from the supplied intent or context."
-            .into()
+        "None identified from supplied intent or context".into()
     }
 }
 
@@ -652,24 +473,12 @@ fn parent_subissue_batch_signal(input: &InteractiveForgeInput) -> bool {
     )
 }
 
-fn apply_parent_subissue_contract_defaults(mut draft: String) -> String {
-    draft = draft.replace(
-        "- UAT Required: No",
-        "- UAT Required: Yes\n- Parent/Subissue UAT Contract: parent issue owns final UAT; routine native subissues default to No direct UAT",
-    );
-    draft = draft.replace(
-        "### Decisions\n\n",
-        "### Decisions\n\n- Parent/subissue batch contract: the parent issue owns final Human Review and UAT; routine native subissues keep independent Agent Review and then route directly to Merging.\n- Routine native subissues should record `UAT Required: No` and no direct Human Review unless they include `Subissue Human Review Exception: <reason>`.\n",
-    );
-    draft = draft.replace(
-        "## Non-Negotiable Guardrails\n\n",
-        "## Non-Negotiable Guardrails\n\n- Do not route routine native subissue Review PASS to Human Review; use parent-owned Human Review/UAT unless an explicit exception is recorded.\n- Do not dispatch parent Main work until every native subissue is Done.\n",
-    );
-    draft = draft.replace(
-        "### Completion Criteria\n\n",
-        "### Completion Criteria\n\n- [ ] Parent/subissue contracts identify the parent-owned UAT/Human Review unit and the routine child no-direct-Human-Review default.\n",
-    );
-    draft
+fn markdown_bullets(values: &[String]) -> String {
+    values
+        .iter()
+        .map(|value| format!("- `{}`", value.trim().trim_matches('`')))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn focused_interactive_question(
@@ -804,89 +613,67 @@ fn forge_issue(title: &str, markdown: &str) -> TrackerIssue {
     }
 }
 
-fn record_gate_notes(markdown: &str, decision: &GateDecision) -> String {
-    let mut repaired = markdown.trim_end().to_string();
-    repaired.push_str("\n\n## Issue Forge Gate Notes\n\n");
-    repaired.push_str(&format!("- Gate Decision: {:?}\n", decision.kind));
-    if decision.assumptions.is_empty() {
-        repaired.push_str("- Assumptions: None recorded.\n");
-    } else {
-        for assumption in &decision.assumptions {
-            repaired.push_str(&format!("- Assumption: {assumption}\n"));
-        }
-    }
-    repaired
-}
-
-fn repaired_draft(title: &str, markdown: &str, decision: &GateDecision) -> String {
+fn repaired_draft(
+    title: &str,
+    markdown: &str,
+    decision: &GateDecision,
+    template: &ExecutableIssueTemplate,
+) -> String {
     let goal = extract_first_sentence(markdown)
         .filter(|value| !value.is_empty())
         .unwrap_or(title);
-    let mut draft = draft_from_template(title, goal);
-    draft = draft.replace(
-        "## Why Now\n\nTBD",
-        "## Why Now\n\nThis issue needs clarification or structure before it can be safely dispatched.",
-    );
-    draft = draft.replace(
-        "## Issue Context\n\nTBD",
-        &format!(
-            "## Issue Context\n\nSource input captured by Issue Forge:\n\n```md\n{}\n```",
-            markdown.trim()
-        ),
-    );
-    draft = draft.replace(
-        "### Decisions\n\n- TBD",
-        "### Decisions\n\n- Use Issue Forge repair to convert rough input into the Shea Symphony quality template.",
-    );
-    let assumptions = if decision.missing.is_empty() {
-        "- Existing source input is sufficient for an initial executable draft.".to_string()
+    let unresolved = if decision.missing.is_empty() {
+        "No deterministic input-safety findings remain.".to_string()
     } else {
         format!(
-            "- Repaired draft still needs human confirmation for: {}.",
+            "Human confirmation remains required for: {}.",
             decision.missing.join(", ")
         )
     };
-    draft = draft.replace(
-        "### Assumptions\n\n- TBD",
-        &format!("### Assumptions\n\n{assumptions}"),
+    let mut values = draft_values(title, goal, Some(markdown), false);
+    let object = values
+        .as_object_mut()
+        .expect("draft values are a JSON object");
+    object.insert(
+        "current_state".into(),
+        format!("Rough candidate input was captured for repair. {unresolved}").into(),
     );
-    draft = draft.replace(
-        "### Target Repository / Package\n\n- TBD",
-        "### Target Repository / Package\n\n- Alive24/shea-symphony",
-    );
-    draft = draft.replace(
-        "### Relevant Knowledge Sources\n\n- TBD",
-        "### Relevant Knowledge Sources\n\n- docs/README.md\n- .agents/skills/shea-issue-forge/references/contract.md",
-    );
-    draft = draft.replace(
-        "### Relevant Code Paths\n\n- TBD",
-        "### Relevant Code Paths\n\n- TBD by implementer after source scan.",
-    );
-    draft = draft.replace(
-        "## Current State\n\nTBD",
-        "## Current State\n\nRough issue input exists and has been repaired into the Shea Symphony issue contract shape.",
-    );
-    draft = draft.replace(
-        "## Deliverable Shape\n\nTBD",
-        "## Deliverable Shape\n\nCode, docs, issue update, or validation artifact as appropriate for the final accepted scope.",
-    );
-    draft = draft.replace(
-        "## Risks or Constraints\n\n- TBD",
-        "## Risks or Constraints\n\n- Do not expand scope beyond the repaired issue contract without creating follow-up candidates.",
-    );
-    draft = draft.replace(
-        "## Expected Outcome\n\nTBD",
-        "## Expected Outcome\n\n- [ ] An executable issue contract that can pass the Issue Quality Gate before dispatch.",
-    );
-    draft = draft.replace(
-        "### Completion Criteria\n\n- TBD",
-        "### Completion Criteria\n\n- [ ] Issue contract has goal, scope, guardrails, references, and validation requirements.",
-    );
-    draft = draft.replace(
-        "### Functional Verification\n\n- TBD",
-        "### Functional Verification\n\n- [ ] Run `shea-symphony forge validate` on the repaired draft.",
-    );
-    draft
+    render_executable_issue_template(template, &values)
+        .expect("selected executable-Issue template must render repair")
+}
+
+fn draft_values(
+    title: &str,
+    goal: &str,
+    source_context: Option<&str>,
+    parent_subissue: bool,
+) -> serde_json::Value {
+    serde_json::json!({
+        "uat_required": if parent_subissue { "Yes" } else { "No" },
+        "assignee": "Alive24",
+        "dependencies": "None identified; confirm native relationships before dispatch",
+        "documentation_impact": "Update documentation that directly describes the accepted behavior, or record why no change is required.",
+        "related_context": "None recorded",
+        "parent_subissue": parent_subissue,
+        "goal": goal,
+        "why_now": "This candidate needs an executable repository contract before dispatch.",
+        "target_repository": "- `Alive24/shea-symphony`",
+        "context": source_context.map(|source| format!("Source input captured by Issue Forge:\n\n```md\n{}\n```", source.trim())).unwrap_or_else(|| "No additional context was supplied.".into()),
+        "guardrails": "- Keep implementation within the accepted issue contract.\n- Preserve guarded writes and targeted readback.",
+        "in_scope": format!("- Implement the smallest executable slice for: {title}."),
+        "out_of_scope": "- Unrelated product or roadmap work.",
+        "knowledge_sources": "- `.agents/skills/shea-issue-forge/references/contract.md`",
+        "code_paths": "- Confirm focused paths from current repository evidence before dispatch.",
+        "current_state": "Issue Forge produced this candidate from currently supplied input.",
+        "code_state_freshness": "Refresh the target base and relevant relationships before dispatch.",
+        "deliverable_shape": "A focused code, test, documentation, or tracker contract change matching accepted scope.",
+        "risks": "- Do not invent missing product decisions.\n- Create separate follow-ups for broader work.",
+        "expected_outcome": "- [ ] The accepted issue can be implemented and independently verified.",
+        "completion_criteria": "- [ ] The configured deterministic and semantic gates accept the final candidate.",
+        "functional_verification": "- [ ] Run repository-owned verification for the accepted surface.",
+        "uat": "- [ ] Complete operator UAT when observable; otherwise record why it is not required.",
+        "context_verification": "- [ ] Recheck current base, native relationships, and recent relevant work."
+    })
 }
 
 fn extract_first_sentence(markdown: &str) -> Option<&str> {
@@ -916,11 +703,11 @@ mod tests {
     }
 
     #[test]
-    fn validates_thin_markdown_with_actionable_question() {
+    fn deterministic_validation_keeps_semantic_policy_out_of_rust() {
         let report = validate_markdown("Thin issue", "make forge better");
 
-        assert_eq!(report.decision.kind, GateDecisionKind::NeedToClarify);
-        assert!(report.question.unwrap().question.contains("goal"));
+        assert_eq!(report.decision.kind, GateDecisionKind::Ready);
+        assert!(report.question.is_none());
     }
 
     #[test]
@@ -928,10 +715,8 @@ mod tests {
         let report = repair_markdown("Implement Forge", "make forge better");
         let validation = validate_markdown("Implement Forge", &report.repaired_markdown);
 
-        assert!(report
-            .repaired_markdown
-            .contains("## Decisions / Assumptions"));
         assert!(report.repaired_markdown.contains("## Issue Goal"));
+        assert!(report.repaired_markdown.contains("Documentation Impact"));
         assert!(!report.repaired_markdown.contains("docs/bootstrap/"));
         assert!(validation.decision.is_dispatchable());
     }
@@ -991,7 +776,7 @@ mod tests {
         assert!(report.validation.decision.is_dispatchable());
         assert!(report.issue_markdown.contains("## Issue Goal"));
         assert!(report.issue_markdown.contains("- Assignee: Alive24"));
-        assert!(report.issue_markdown.contains("## Dependencies"));
+        assert!(report.issue_markdown.contains("- Dependencies:"));
         assert!(report.issue_markdown.contains("src/runtime_state.rs"));
         assert!(report.question.is_none());
     }
@@ -1009,11 +794,13 @@ mod tests {
         assert!(report.validation.decision.is_dispatchable());
         assert!(report
             .issue_markdown
-            .contains("parent issue owns final UAT"));
+            .contains("the parent owns final Human Review and UAT"));
         assert!(report
             .issue_markdown
-            .contains("parent issue owns final Human Review and UAT"));
-        assert!(report.issue_markdown.contains("route directly to Merging"));
+            .contains("the parent owns final Human Review and UAT"));
+        assert!(report
+            .issue_markdown
+            .contains("route from independent Agent Review to Merging"));
         assert!(report
             .issue_markdown
             .contains("Subissue Human Review Exception: <reason>"));
@@ -1072,7 +859,7 @@ mod tests {
             .contains("Potential dependency requires operator confirmation"));
         assert_eq!(
             candidates[0].validation.decision.kind,
-            GateDecisionKind::NeedToClarify
+            GateDecisionKind::Ready
         );
     }
 
@@ -1087,9 +874,9 @@ mod tests {
         assert_eq!(candidates.len(), 1);
         assert!(candidates[0]
             .issue_markdown
-            .contains("parent issue owns final Human Review and UAT"));
+            .contains("the parent owns final Human Review and UAT"));
         assert!(candidates[0]
             .issue_markdown
-            .contains("Routine native subissues should record `UAT Required: No`"));
+            .contains("routine native subissues route from independent Agent Review to Merging"));
     }
 }

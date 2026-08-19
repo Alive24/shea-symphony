@@ -5,7 +5,7 @@ metadata:
   short-description: Run one independent Shea review
 ---
 
-# Shea Symphony Manual Review
+# Shea Symphony Agent Review
 
 This skill launches one external Review backend. Do not review the code yourself, manufacture evidence, or blur Review into implementation.
 
@@ -16,6 +16,16 @@ Read `.shea/contracts/workflow-capability.v1.md`, resolve its active workflow, a
 Use targeted `issue.read`, `issue.inspect`, `evidence.read`, `pull_request.read`, and `relationships.read`. Require Agent Review state, one ready non-draft linked PR, a consistent canonical workspace/Main handoff, no conflicting Review claim/job, and an available external backend. Review independence, linked-PR evidence, and workspace identity fail closed.
 
 Routine native subissue PASS routes to `Merging`, not `Human Review`; the parent owns final Human Review/UAT unless an explicit exception is recorded.
+
+## Invocation authorization
+
+An operator invocation that names exactly one issue, such as `$shea-agent-review #569`, is explicit confirmation for one wrapper-owned Agent Review run using the backend resolved from the active workflow. It authorizes the wrapper to:
+
+- send only the named issue contract, linked ready PR and diff, canonical workspace repository content, and required Main handoff/evidence to that backend;
+- allow workflow-authorized read-only repository inspection plus wrapper-owned local logs, ledger, scratch, and localhost language-server access;
+- write the Review claim, append Review evidence, update supported non-UAT checklist evidence, and make the decision-derived Review state transition last.
+
+After preflight proves the exact issue, PR, workspace, backend, and bounded actions, launch without asking the operator for the same authorization again. Require new explicit authorization if any of those resolved identities changes after preflight, the backend requests tools or write authority beyond configured read-only Review, content would cross the named repository/PR boundary, or standalone preparation is required. This invocation does not authorize workflow/backend changes, implementation, Human approval, or Merge.
 
 ## Launch and read back
 

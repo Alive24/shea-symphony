@@ -26,8 +26,11 @@ scope, risks, outcomes, and verification. Boolean inputs support optional
 sections. Its raw `{% comment %}` block carries trusted semantic intent and is
 not present in the rendered Issue.
 
-Backend fragments are repository Markdown. Static fragments receive no dynamic
-context; Merge repair receives only typed conflict facts such as `pr_ref`,
+Backend fragments are repository Markdown. Most static fragments receive no
+dynamic context. The automatic structured-Review fragment receives only
+wrapper-resolved, repository-confined capability, active-workflow, and adapter
+paths; the external reviewer never chooses their relative-path base. Merge
+repair receives only typed conflict facts such as `pr_ref`,
 `head_ref_name`, `expected_base`, and sanitized `mechanical_stderr`. JSON Schema
 construction, output classification, claim identity, and Project mutation
 remain code-owned enforcement.
@@ -72,6 +75,12 @@ contains:
 - an unknown workpad placeholder, such as `{{ missing_handoff_value }}`;
 - an unknown filter, such as `{{ issue.title | no_such_filter }}`;
 - malformed Liquid syntax, such as an unclosed `{% if %}` or `{% for %}` block.
+
+Structured Review also fails before external backend launch when the enabled
+resource closure cannot resolve exactly one capability contract, its active
+workflow, and every supported adapter to existing paths confined under the
+repository root, or when those resolved paths do not match the loaded workflow
+and enabled closure.
 
 This strictness is intentional. Liquid compatibility must not silently drop
 missing data, tolerate misspelled filters, or write partial workpad evidence.

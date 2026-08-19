@@ -38,8 +38,7 @@ tool should write tracker state directly.
 
 This package implements decisions from:
 
-- `TRACKER-TRANSITION-ACTIVITY.md`;
-- `TRACKER-TRANSITIONS.md`;
+- `../adr/0002-tracker-write-ownership.md`;
 - `ACTIVITY-ERROR-TAXONOMY.md`;
 - `TEMPORAL-SPINE.md`;
 - `OPERATOR-ACTION-BRIDGE.md`.
@@ -69,6 +68,27 @@ This package implements decisions from:
 - No SQLite tracker mutation ledger in the initial schema.
 - No Activity-side business decision about whether a conflict should become
   `Need Human Input`, stop, or reconcile.
+
+## Commit Authority
+
+Tracker mutation has three distinct owners:
+
+- an Activity result, extension, or operator action may **propose** a next
+  state;
+- `IssueWorkflow` **decides** whether to request the transition;
+- `TrackerTransitionActivity` **commits** the tracker mutation and verifies it
+  through readback.
+
+The same boundary applies to state changes, evidence, claims, and PR binding.
+Extensions may produce evidence or propose an edge, but they cannot write
+tracker fields, close issues, clear claims, bind or merge PRs, or mark terminal
+completion directly. App and compatibility adapters must call the shared
+Symphony/Temporal boundary rather than preserve a second commit path.
+
+Symphony-owned lane logic retains authority for destructive or terminal side
+effects, including PR merge, issue closure, claim cleanup, and `Merging` to
+`Done`. An Activity API success is only an attempted write; a handoff is not
+complete until the required mutation and readback are confirmed.
 
 ## Expected Code Areas
 

@@ -20,7 +20,7 @@ This package implements decisions from:
 - `ROADMAP.md`;
 - `TEMPORAL-SPINE.md`;
 - `APP-CLI-SPLIT.md`;
-- `TRACKER-TRANSITION-ACTIVITY.md`;
+- `T2607-04-tracker-transition-activity.md`;
 - `LOCAL-STATE-DB.md`.
 
 ## Goals

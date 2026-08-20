@@ -7,6 +7,7 @@
       "available": true,
       "depends_on": [],
       "resources": [
+        { "kind": "skill", "path": "../.agents/skills/shea-check" },
         { "kind": "skill", "path": "../.agents/skills/shea-issue-forge" },
         { "kind": "skill", "path": "../.agents/skills/shea-backlog" },
         { "kind": "skill", "path": "../.agents/skills/shea-doctor" },

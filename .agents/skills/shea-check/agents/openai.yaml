@@ -1,0 +1,4 @@
+interface:
+  display_name: "Shea Check"
+  short_description: "Check current Shea readiness and route next work"
+  default_prompt: "Use $shea-check to refresh the current Shea facts, assess what can proceed, and route the next operator action without changing state."

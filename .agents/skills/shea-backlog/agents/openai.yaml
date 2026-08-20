@@ -1,4 +1,4 @@
 interface:
   display_name: "Shea Backlog"
-  short_description: "Checkpoint and organize bounded Backlog memory"
-  default_prompt: "Use $shea-backlog to summarize current progress and blockers, then organize bounded Backlog candidates without promoting or executing them."
+  short_description: "Capture and organize bounded Backlog memory"
+  default_prompt: "Use $shea-backlog to capture or organize bounded future-work seeds without promoting or executing them."

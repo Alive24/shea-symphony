@@ -6,6 +6,7 @@ const CANONICAL_SKILLS: &[&str] = &[
     "setup-shea",
     "shea-halo-research-seed",
     "shea-backlog",
+    "shea-check",
     "shea-deepen",
     "shea-doctor",
     "shea-human-review",
@@ -151,6 +152,7 @@ fn installable_manifest_declares_core_and_explicit_optional_groups() {
     assert_eq!(groups["core"]["optional"], false);
     assert_eq!(groups["shea_docs"]["available"], false);
     let core = serde_json::to_string(&groups["core"]).unwrap();
+    assert!(core.contains("shea-check"));
     assert!(!core.contains("setup-shea"));
     assert!(!core.contains("shea-deepen"));
     assert!(!core.contains("shea-halo-research-seed"));
@@ -409,7 +411,30 @@ fn backlog_skill_owns_bounded_memory_but_not_promotion_or_execution() {
     assert!(backlog.contains(".shea/contracts/workflow-capability.v1.md"));
     assert!(backlog.contains("`issue.create`"));
     assert!(!backlog.contains("`issue.promote`"));
+    assert!(!backlog.contains("checkpoint current progress"));
+    assert!(backlog.contains("$shea-check"));
     assert!(backlog.contains("$shea-issue-forge"));
+}
+
+#[test]
+fn check_skill_owns_read_only_navigation_but_not_repairs_or_execution() {
+    let check = skill_file("shea-check", "SKILL.md");
+
+    assert!(check.lines().count() < 80, "Check expanded into a runbook");
+    for marker in [
+        "bounded, read-only operator navigation",
+        "native relationships",
+        "lane gate",
+        "`ready`",
+        "`in_flight`",
+        "`blocked`",
+        "$shea-issue-forge",
+        "$shea-doctor",
+        "$shea-backlog",
+        "Do not start a lane",
+    ] {
+        assert!(check.contains(marker), "Check missing boundary: {marker}");
+    }
 }
 
 #[test]

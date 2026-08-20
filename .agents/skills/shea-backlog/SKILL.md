@@ -1,36 +1,34 @@
 ---
 name: shea-backlog
-description: Run bounded Shea Symphony progress and blocker checkpoints, capture and organize residual Backlog memory, deduplicate or review stale seeds, and route operator-selected candidates to Issue Forge without promoting or executing them. Use when an operator asks what is moving, blocked, left over, worth remembering, or ready for later shaping.
+description: Capture and organize bounded Shea Symphony Backlog memory, deduplicate or review stale seeds, and route operator-selected candidates to Issue Forge without promoting or executing them. Use when an operator wants to remember future work, add a Backlog seed, or organize, prune, or reconsider existing Backlog items.
 ---
 
 # Shea Symphony Backlog
 
-Maintain a compact memory surface for work that is not yet executable. Keep the
-checkpoint useful now without turning Backlog into an execution queue.
+Maintain a compact memory surface for work that is not yet executable. Do not
+use Backlog as the current execution-status or operator-navigation surface.
 
 ## Bind and read
 
 Resolve `.shea/contracts/workflow-capability.v1.md`, its active workflow, and a
 supported adapter. Bind the repository, Project, default assignee, and operator-
-named scope. Prefer current targeted issue, relationship, PR, workpad, and lane
-evidence; inspect only the recent context needed to explain progress or preserve
-residual work. Do not reopen broad history or archived Dream Logs by default.
+named scope. Prefer targeted issue, relationship, PR, and current-code evidence
+needed to decide whether a seed remains useful. Do not reopen broad history or
+archived Dream Logs by default.
 
 Classify the request as one or more of:
 
-- checkpoint current progress, blockers, and what can proceed;
 - capture a bounded residual idea or repeated operator friction;
 - organize or deduplicate existing Backlog seeds; or
 - review stale seeds against current code, issues, and PRs.
 
-Route only a concrete runtime or contract failure to
-`$shea-doctor`; keep the overall checkpoint here.
+Route current progress, blocker, readiness, or next-action assessment to
+`$shea-check`. Route a concrete runtime or contract failure to `$shea-doctor`.
 
 ## Report and capture
 
-Report facts separately from inference. Summarize current movement, blockers,
-next eligible work, and residual candidates with evidence anchors. Drop solved
-or duplicate candidates and label uncertain ones instead of expanding the scan.
+Report facts separately from inference. Summarize retained, solved, duplicate,
+and uncertain candidates with evidence anchors instead of expanding the scan.
 
 Use this compact seed when durable memory is warranted:
 

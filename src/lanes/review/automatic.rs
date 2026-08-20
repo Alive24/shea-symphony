@@ -927,7 +927,27 @@ pub(crate) fn render_automatic_review_prompt_for_backend(
     let template = workflow
         .backend_prompt(fragment_key)
         .map_err(|error| shea_symphony::prompt::PromptError::Context(error.to_string()))?;
-    let boundary = render_template_with_values(template, &[])?;
+    let boundary = if fragment_key == "automatic_review_structured" {
+        let resources = workflow
+            .resolved_workflow_capability()
+            .map_err(|error| shea_symphony::prompt::PromptError::Context(error.to_string()))?;
+        let adapter_paths = resources
+            .adapters
+            .iter()
+            .map(|(id, path)| format!("- `{id}`: `{path}`"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        render_template_with_values(
+            template,
+            &[
+                ("capability_path", resources.capability_path),
+                ("active_workflow_path", resources.active_workflow_path),
+                ("adapter_paths", adapter_paths),
+            ],
+        )?
+    } else {
+        render_template_with_values(template, &[])?
+    };
     prompt.push_str("\n\n");
     prompt.push_str(&boundary);
     Ok(prompt)

@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::Value;
 use thiserror::Error;
 
@@ -40,6 +41,38 @@ pub struct LanePromptSources {
 pub struct PromptTemplateSource {
     pub kind: PromptTemplateSourceKind,
     pub path: Option<PathBuf>,
+}
+
+/// Repository-relative resources declared by the active workflow capability.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedWorkflowCapability {
+    /// Repository-relative workflow capability contract path.
+    pub capability_path: String,
+    /// Repository-relative active workflow path.
+    pub active_workflow_path: String,
+    /// Adapter IDs and repository-relative paths, in declaration order.
+    pub adapters: Vec<(String, String)>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WorkflowCapabilityMetadata {
+    kind: String,
+    #[serde(default)]
+    active_workflow: String,
+    #[serde(default)]
+    adapters: Vec<WorkflowAdapterReference>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WorkflowAdapterReference {
+    id: String,
+    path: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct WorkflowAdapterMetadata {
+    kind: String,
+    adapter_id: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,8 +131,17 @@ pub enum WorkflowError {
         path: PathBuf,
         source: std::io::Error,
     },
+    #[error("invalid executable-Issue template configuration: {0}")]
+    InvalidIssueTemplateConfig(String),
+    #[error("missing executable-Issue template at {path}: {source}")]
+    MissingIssueTemplate {
+        path: PathBuf,
+        source: std::io::Error,
+    },
     #[error("invalid installable resource closure: {0}")]
     ResourceManifest(#[from] ResourceManifestError),
+    #[error("invalid workflow capability resources: {0}")]
+    InvalidWorkflowCapability(String),
 }
 
 pub const REQUIRED_BACKEND_PROMPT_KEYS: &[&str] = &[
@@ -128,6 +170,7 @@ impl WorkflowDefinition {
         let resource_closure = resolve_resource_closure(path.as_ref(), &config)?;
         let lane_prompt_bundle = load_lane_prompts(path.as_ref(), &config, &workflow_index)?;
         let backend_prompt_bundle = load_backend_prompts(path.as_ref(), &config)?;
+        validate_issue_template(path.as_ref(), &config)?;
         validate_workpad_templates(path.as_ref(), &config)?;
 
         Ok(Self {
@@ -173,6 +216,176 @@ impl WorkflowDefinition {
     pub fn backend_prompt_source(&self, key: &str) -> Option<&PromptTemplateSource> {
         self.backend_prompt_sources.get(key)
     }
+
+    /// Resolves the active capability and adapters through the confined resource closure.
+    pub fn resolved_workflow_capability(
+        &self,
+    ) -> Result<ResolvedWorkflowCapability, WorkflowError> {
+        let closure = self
+            .resource_closure
+            .as_ref()
+            .ok_or_else(|| capability_error("a resolved workflow resource closure is required"))?;
+        let mut capability = None;
+        for resource in closure
+            .resources
+            .iter()
+            .filter(|resource| resource.kind == "contract")
+        {
+            let metadata: WorkflowCapabilityMetadata = markdown_front_matter(&resource.path)?;
+            if metadata.kind == "shea-workflow-capability"
+                && capability.replace((resource, metadata)).is_some()
+            {
+                return Err(capability_error(
+                    "resource closure has multiple workflow capability contracts",
+                ));
+            }
+        }
+        let (capability, metadata) = capability
+            .ok_or_else(|| capability_error("resource closure has no workflow capability"))?;
+        let declaring_directory = capability
+            .path
+            .parent()
+            .ok_or_else(|| capability_error("workflow capability path has no parent"))?;
+        let active_workflow_path = resolve_closure_resource(
+            closure,
+            declaring_directory,
+            &metadata.active_workflow,
+            "workflow",
+            "active workflow",
+        )?;
+        let loaded_workflow_path = fs::canonicalize(&self.path)
+            .map_err(|error| capability_error(format!("loaded workflow: {error}")))?;
+        if active_workflow_path != loaded_workflow_path {
+            return Err(capability_error(
+                "capability active workflow does not match loaded workflow",
+            ));
+        }
+        if metadata.adapters.is_empty() {
+            return Err(capability_error("workflow capability declares no adapters"));
+        }
+        let mut adapters = Vec::with_capacity(metadata.adapters.len());
+        for adapter in metadata.adapters {
+            let adapter_path = resolve_closure_resource(
+                closure,
+                declaring_directory,
+                &adapter.path,
+                "adapter",
+                &format!("adapter `{}`", adapter.id),
+            )?;
+            let adapter_metadata: WorkflowAdapterMetadata = markdown_front_matter(adapter_path)?;
+            if adapter_metadata.kind != "shea-workflow-capability-adapter"
+                || adapter_metadata.adapter_id != adapter.id
+            {
+                return Err(capability_error(format!(
+                    "adapter `{}` metadata does not match its capability reference",
+                    adapter.id
+                )));
+            }
+            adapters.push((adapter.id, repository_relative_path(closure, adapter_path)?));
+        }
+        Ok(ResolvedWorkflowCapability {
+            capability_path: repository_relative_path(closure, &capability.path)?,
+            active_workflow_path: repository_relative_path(closure, active_workflow_path)?,
+            adapters,
+        })
+    }
+}
+
+fn capability_error(message: impl Into<String>) -> WorkflowError {
+    WorkflowError::InvalidWorkflowCapability(message.into())
+}
+
+fn markdown_front_matter<T: DeserializeOwned>(path: &Path) -> Result<T, WorkflowError> {
+    let source = fs::read_to_string(path)
+        .map_err(|error| capability_error(format!("{}: {error}", path.display())))?;
+    let yaml = source
+        .strip_prefix("---\n")
+        .and_then(|source| source.split_once("\n---\n").map(|(yaml, _)| yaml))
+        .ok_or_else(|| capability_error(format!("{} has invalid front matter", path.display())))?;
+    serde_yaml::from_str(yaml)
+        .map_err(|error| capability_error(format!("{}: {error}", path.display())))
+}
+
+fn resolve_closure_resource<'a>(
+    closure: &'a ResolvedResourceClosure,
+    declaring_directory: &Path,
+    reference: &str,
+    kind: &str,
+    label: &str,
+) -> Result<&'a Path, WorkflowError> {
+    if reference.trim().is_empty() || Path::new(reference).is_absolute() {
+        return Err(capability_error(format!(
+            "{label} reference must be non-empty and relative: {reference}"
+        )));
+    }
+    let resolved = fs::canonicalize(declaring_directory.join(reference))
+        .map_err(|error| capability_error(format!("{label} `{reference}`: {error}")))?;
+    closure
+        .resources
+        .iter()
+        .find(|resource| resource.kind == kind && resource.path == resolved)
+        .map(|resource| resource.path.as_path())
+        .ok_or_else(|| capability_error(format!("resolved {label} is outside resource closure")))
+}
+
+fn repository_relative_path(
+    closure: &ResolvedResourceClosure,
+    path: &Path,
+) -> Result<String, WorkflowError> {
+    let root = closure
+        .manifest_path
+        .parent()
+        .and_then(Path::parent)
+        .ok_or_else(|| capability_error("resource manifest path has no repository root"))?;
+    path.strip_prefix(root)
+        .map(|relative| relative.to_string_lossy().into_owned())
+        .map_err(|_| capability_error("resolved capability resource is outside repository root"))
+}
+
+fn validate_issue_template(workflow_path: &Path, config: &Value) -> Result<(), WorkflowError> {
+    let Some(value) = config.get("issue_templates") else {
+        return Ok(());
+    };
+    let templates = value.as_object().ok_or_else(|| {
+        WorkflowError::InvalidIssueTemplateConfig(
+            "issue_templates must be a map/object with exactly `executable`".into(),
+        )
+    })?;
+    if templates.len() != 1 || !templates.contains_key("executable") {
+        return Err(WorkflowError::InvalidIssueTemplateConfig(
+            "issue_templates must select exactly one `executable` Markdown file".into(),
+        ));
+    }
+    let relative = templates["executable"]
+        .as_str()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            WorkflowError::InvalidIssueTemplateConfig(
+                "issue_templates.executable must name a repository Markdown file".into(),
+            )
+        })?;
+    let path = resolve_workflow_relative_path(workflow_path, relative);
+    let body = fs::read_to_string(&path).map_err(|source| WorkflowError::MissingIssueTemplate {
+        path: path.clone(),
+        source,
+    })?;
+    if body.trim().is_empty() {
+        return Err(WorkflowError::InvalidIssueTemplateConfig(format!(
+            "issue_templates.executable is empty at {}; restore the selected resource",
+            path.display()
+        )));
+    }
+    liquid::ParserBuilder::with_stdlib()
+        .build()
+        .map_err(|error| WorkflowError::InvalidIssueTemplateConfig(error.to_string()))?
+        .parse(&body)
+        .map_err(|error| {
+            WorkflowError::InvalidIssueTemplateConfig(format!(
+                "issue_templates.executable is invalid at {}: {error}",
+                path.display()
+            ))
+        })?;
+    Ok(())
 }
 
 fn validate_workpad_templates(workflow_path: &Path, config: &Value) -> Result<(), WorkflowError> {
@@ -690,6 +903,54 @@ mod tests {
             assert!(error.contains(expected), "unexpected error: {error}");
             assert!(error.contains(key), "unexpected error: {error}");
         }
+    }
+
+    #[test]
+    fn configured_executable_issue_template_is_exactly_one_and_fail_closed() {
+        let temp = tempfile::tempdir().unwrap();
+        let workflow_path = temp.path().join("WORKFLOW.md");
+        fs::write(temp.path().join("issue.md"), "## Goal\n{{ goal }}").unwrap();
+        let workflow = WorkflowDefinition::parse(
+            &workflow_path,
+            "---\nissue_templates:\n  executable: issue.md\n---\nWorkflow index",
+        )
+        .unwrap();
+        assert_eq!(workflow.config["issue_templates"]["executable"], "issue.md");
+
+        for (config, expected) in [
+            (
+                "issue_templates:\n  executable: missing.md",
+                "missing executable-Issue template",
+            ),
+            (
+                "issue_templates:\n  executable: issue.md\n  duplicate: issue.md",
+                "exactly one",
+            ),
+        ] {
+            let source = format!("---\n{config}\n---\nWorkflow index");
+            let error = WorkflowDefinition::parse(&workflow_path, &source)
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(expected), "unexpected error: {error}");
+        }
+
+        fs::write(temp.path().join("issue.md"), "{% if open %}").unwrap();
+        let error = WorkflowDefinition::parse(
+            &workflow_path,
+            "---\nissue_templates:\n  executable: issue.md\n---\nWorkflow index",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("is invalid"));
+
+        fs::write(temp.path().join("issue.md"), " \n").unwrap();
+        let error = WorkflowDefinition::parse(
+            &workflow_path,
+            "---\nissue_templates:\n  executable: issue.md\n---\nWorkflow index",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("is empty"));
     }
 
     #[test]

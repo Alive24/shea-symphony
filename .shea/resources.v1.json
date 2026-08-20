@@ -21,6 +21,7 @@
         { "kind": "lane_prompt", "path": "prompts/review-agent.md" },
         { "kind": "lane_prompt", "path": "prompts/merge-agent.md" },
         { "kind": "backend_prompt", "path": "prompts/backend" },
+        { "kind": "template", "path": "template/issue/executable.md" },
         { "kind": "template", "path": "template/workpad" },
         { "kind": "template", "path": "template/evidence/agent-review-handoff.md" },
         { "kind": "template", "path": "template/evidence/agent-review.md" },

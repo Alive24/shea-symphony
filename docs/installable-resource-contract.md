@@ -6,7 +6,8 @@ package database, upgrade ledger, or overwrite authority.
 
 The `core` group is always enabled and contains the target-owned operational
 Skills, workflow/capability contracts, lane and backend prompts, runtime
-templates, and authoritative contract documentation. Global `setup-shea` is
+templates (including the executable-Issue template), and authoritative contract
+documentation. Global `setup-shea` is
 deliberately absent. Optional groups are explicit:
 
 - `deepen` installs the report-only `shea-deepen` extension;

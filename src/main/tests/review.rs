@@ -95,11 +95,7 @@ fn automatic_review_prompt_forbids_project_mutations() {
 
 #[test]
 fn agy_automatic_review_prompt_uses_only_structured_result_protocol() {
-    let workflow = WorkflowDefinition::parse(
-        "/tmp/WORKFLOW.md",
-        "---\ntracker:\n  kind: memory\n---\nReview {{ issue.identifier }}",
-    )
-    .unwrap();
+    let workflow = WorkflowDefinition::load(".shea/workflows/shea-symphony.md").unwrap();
     let prompt = render_automatic_review_prompt_for_backend(
         &workflow,
         &review_issue_with_ref("#282", "Headless review"),
@@ -113,7 +109,52 @@ fn agy_automatic_review_prompt_uses_only_structured_result_protocol() {
     assert!(prompt.contains("disposable checkout"));
     assert!(prompt.contains("$SHEA_REVIEW_SCRATCH"));
     assert!(prompt.contains("$CARGO_TARGET_DIR"));
+    assert!(prompt.contains("Capability: `.shea/contracts/workflow-capability.v1.md`"));
+    assert!(prompt.contains("Active workflow: `.shea/workflows/shea-symphony.md`"));
+    assert!(prompt.contains("`legacy-cli-v1`: `.shea/contracts/adapters/legacy-cli.v1.md`"));
+    assert!(!prompt.contains("`.shea/adapters/legacy-cli.v1.md`"));
+    assert!(prompt.contains("do not infer,\nrebase, or shorten paths from frontmatter"));
     assert!(!prompt.contains("Start with exactly one line"));
+}
+
+#[test]
+fn structured_review_fails_before_launch_without_resolved_capability_resources() {
+    let workflow = WorkflowDefinition::parse(
+        "/tmp/WORKFLOW.md",
+        "---\ntracker:\n  kind: memory\n---\nReview {{ issue.identifier }}",
+    )
+    .unwrap();
+
+    let error = render_automatic_review_prompt_for_backend(
+        &workflow,
+        &review_issue_with_ref("#282", "Headless review"),
+        "agy-cli",
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("a resolved workflow resource closure is required"));
+}
+
+#[test]
+fn structured_review_fails_before_launch_when_adapter_is_not_enabled() {
+    let mut workflow = WorkflowDefinition::load(".shea/workflows/shea-symphony.md").unwrap();
+    workflow
+        .resource_closure
+        .as_mut()
+        .unwrap()
+        .resources
+        .retain(|resource| resource.kind != "adapter");
+
+    let error = render_automatic_review_prompt_for_backend(
+        &workflow,
+        &review_issue_with_ref("#282", "Headless review"),
+        "agy-cli",
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("adapter `legacy-cli-v1` is outside resource closure"));
 }
 
 #[test]

@@ -29,6 +29,16 @@
 - Parent/subissue or exception evidence:
 - UAT evidence:
 
+### Documentation Impact Reconciliation
+
+- Issue declaration:
+- Bounded Main evidence:
+- PR documentation diff:
+- Reconciliation: complete | reconciliation required
+- Resolution path: ordinary Main/Rework | manual repair | optional shea-docs | not required
+- Remaining concern:
+- Approval invariant: `Approve for Merging` is unavailable while reconciliation is `reconciliation required`.
+
 ### UAT Result
 
 - Pass/fail/deferred:

@@ -478,4 +478,20 @@ mod tests {
         assert!(!body.contains("- Branch: `old`"));
         assert!(body.contains("- [x] keep"));
     }
+
+    #[test]
+    fn repeated_main_handoffs_replace_bounded_documentation_evidence_in_one_workpad() {
+        let marker = "<!-- shea-symphony-workpad -->";
+        let first = "## Shea Symphony Workpad\n\n### Documentation Impact\n- Actual documentation changes: `docs/first.md`\n- Unresolved reconciliation: pending\n\n### Plan\n- [x] keep";
+        let second = "## Shea Symphony Workpad\n\n### Documentation Impact\n- Actual documentation changes: `docs/final.md`\n- Unresolved reconciliation: Human Review comparison required";
+
+        let after_first = merge_workpad_body("", first, marker);
+        let body = merge_workpad_body(&after_first, second, marker);
+
+        assert_eq!(body.matches("## Shea Symphony Workpad").count(), 1);
+        assert_eq!(body.matches("### Documentation Impact").count(), 1);
+        assert!(!body.contains("docs/first.md"));
+        assert!(body.contains("docs/final.md"));
+        assert!(body.contains("- [x] keep"));
+    }
 }

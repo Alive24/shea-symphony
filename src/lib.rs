@@ -17,6 +17,7 @@ pub mod event_log;
 pub mod git_handoff;
 pub mod handoff;
 pub mod issue_forge;
+pub mod issue_templates;
 pub mod issue_workspace;
 pub mod lane_claim;
 pub mod merge_lane;

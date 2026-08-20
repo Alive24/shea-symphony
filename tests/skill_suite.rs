@@ -220,12 +220,13 @@ fn retained_templates_have_taxonomy_and_identified_consumers() {
         .into_iter()
         .filter(|path| path.extension().is_some_and(|extension| extension == "md"))
         .collect::<Vec<_>>();
-    assert_eq!(files.len(), 25);
+    assert_eq!(files.len(), 26);
     for path in files {
         let relative = path.strip_prefix(repo_path(".shea")).unwrap();
         let relative = relative.to_string_lossy();
         assert!(
-            relative.starts_with("template/workpad/")
+            relative.starts_with("template/issue/")
+                || relative.starts_with("template/workpad/")
                 || relative.starts_with("template/evidence/")
                 || relative.starts_with("template/decision/")
                 || relative.starts_with("template/report/"),
@@ -745,10 +746,16 @@ fn human_review_contract_and_templates_support_operator_owned_decisions() {
     }
     assert!(skill.contains("Accepted Human Review routes to `Merging`"));
     assert!(skill.contains("Never mutate Project state until the operator explicitly confirms"));
+    assert!(skill.contains("`complete` or `reconciliation required`"));
+    assert!(skill.contains("never require that optional skill"));
     assert!(template.contains("Approve for Merging"));
     assert!(template.contains("Request Rework"));
     assert!(template.contains("Need Human Input"));
     assert!(template.contains("Defer"));
+    assert!(template.contains("### Documentation Impact Reconciliation"));
+    assert!(template.contains(
+        "`Approve for Merging` is unavailable while reconciliation is `reconciliation required`"
+    ));
     assert!(report.contains("This readiness report is read-only and advisory"));
     assert!(report.contains("does not prove parent acceptance"));
     assert!(handoff.contains("sole authoritative Human Review contract"));

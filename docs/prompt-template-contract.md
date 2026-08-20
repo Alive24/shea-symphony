@@ -3,7 +3,9 @@
 Status: strict Liquid-compatible rendering.
 
 Shea Symphony renders workflow lane prompts, selected backend fragments, and
-configured runtime templates before launching agents or writing evidence. Rendering uses the Rust
+configured runtime templates before launching agents or writing evidence. The
+workflow-selected executable-Issue template additionally owns Issue layout and
+same-file semantic validation intent. Rendering uses the Rust
 `liquid` engine with the standard Liquid tag and filter library, plus Shea's
 strict external-context validation.
 
@@ -18,8 +20,17 @@ Workpad templates receive the named values supplied by the caller for that
 workpad surface, such as `issue_ref`, `issue_title`, `run_id`, `target_state`,
 or `evidence_summary`.
 
-Backend fragments are repository Markdown. Static fragments receive no dynamic
-context; Merge repair receives only typed conflict facts such as `pr_ref`,
+The executable-Issue template receives typed Forge inputs including goal,
+assignee, dependency/context facts, documentation impact, repository references,
+scope, risks, outcomes, and verification. Boolean inputs support optional
+sections. Its raw `{% comment %}` block carries trusted semantic intent and is
+not present in the rendered Issue.
+
+Backend fragments are repository Markdown. Most static fragments receive no
+dynamic context. The automatic structured-Review fragment receives only
+wrapper-resolved, repository-confined capability, active-workflow, and adapter
+paths; the external reviewer never chooses their relative-path base. Merge
+repair receives only typed conflict facts such as `pr_ref`,
 `head_ref_name`, `expected_base`, and sanitized `mechanical_stderr`. JSON Schema
 construction, output classification, claim identity, and Project mutation
 remain code-owned enforcement.
@@ -65,6 +76,12 @@ contains:
 - an unknown filter, such as `{{ issue.title | no_such_filter }}`;
 - malformed Liquid syntax, such as an unclosed `{% if %}` or `{% for %}` block.
 
+Structured Review also fails before external backend launch when the enabled
+resource closure cannot resolve exactly one capability contract, its active
+workflow, and every supported adapter to existing paths confined under the
+repository root, or when those resolved paths do not match the loaded workflow
+and enabled closure.
+
 This strictness is intentional. Liquid compatibility must not silently drop
 missing data, tolerate misspelled filters, or write partial workpad evidence.
 
@@ -75,10 +92,12 @@ missing data, tolerate misspelled filters, or write partial workpad evidence.
 - `prompt_renderer=strict-liquid-compatible`;
 - `prompt_template_smoke.<lane>=pass` for each configured lane prompt;
 - `backend_prompt_source.<id>=...` with the exact selected Markdown path;
+- `issue_template.executable=... smoke=pass` with selected and rendered bytes;
 - `workpad_template.<id>=... smoke=pass` for every configured or centralized
   workpad/evidence template;
 - `resource_manifest=... groups=...` and each exact
   `resource_markdown_source=...` from the enabled closure.
 
 Any parse error, unknown filter, or unknown external variable in a configured
-prompt or workpad template makes validation fail.
+prompt, executable-Issue, or workpad template makes validation fail. Rendered
+executable Issues also fail when Liquid syntax remains unresolved.

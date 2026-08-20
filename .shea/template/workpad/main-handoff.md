@@ -16,6 +16,9 @@
 ### Verification
 {{run_evidence}}
 
+### Documentation Impact
+{{documentation_impact}}
+
 ### PR / Linkage
 {{planned_handoff}}
 

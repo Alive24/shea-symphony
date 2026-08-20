@@ -16,8 +16,8 @@ permission grant or a command runbook.
 ## Ownership
 
 - The active workflow owns repository, tracker, state, lane, workspace,
-  verification, backend policy, and repository Markdown paths for lane prompts
-  and workpad templates.
+  verification, backend policy, and repository Markdown paths for lane prompts,
+  the executable-Issue template, and workpad templates.
 - Machine-local profiles own executable paths and environment requirements.
 - An adapter maps these semantics to a runtime surface and reports which
   capabilities it supports.
@@ -100,3 +100,8 @@ section-aware idempotent merge mechanics, validation, and tracker transport.
 When an active workflow declares Markdown templates, missing, empty, unreadable,
 or malformed required files make that workflow unready; runtime code must not
 silently substitute an embedded prose copy.
+
+The workflow-selected `issue_templates.executable` file is the single owner of
+both executable-Issue layout and same-file semantic validation intent. Forge
+generation/repair and the optional semantic gate consume that exact raw source;
+Rust retains generic render/input safety and tracker/runtime facts only.

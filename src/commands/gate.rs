@@ -1,11 +1,12 @@
 use std::path::PathBuf;
 
 use shea_symphony::config::RuntimeConfig;
+use shea_symphony::issue_templates::load_executable_issue_template;
 use shea_symphony::model::{GateDecision, GateDecisionKind, TrackerIssue};
 use shea_symphony::progress::run_with_progress_heartbeat;
 use shea_symphony::quality_gate::{
     evaluate_issue_with_dependency_preflight, evaluate_issue_with_llm_gate,
-    evaluate_issue_with_source_alignment, LlmGateMode, LlmGateOptions,
+    evaluate_issue_with_source_alignment, LlmGateContext, LlmGateMode, LlmGateOptions,
 };
 use shea_symphony::tracker::adapter_from_config;
 use shea_symphony::workflow::WorkflowDefinition;
@@ -94,6 +95,7 @@ pub(crate) fn evaluate_issue_for_current_source(
 ) -> Result<GateDecision, Box<dyn std::error::Error>> {
     let repo_root = std::env::current_dir()?;
     let expected_target = expected_target_repository(config);
+    let issue_template = load_executable_issue_template(config)?;
     let deterministic =
         evaluate_issue_with_source_alignment(issue, &repo_root, expected_target.as_deref());
     if let Some(blocker) = live_missing_assignee_gate_blocker(config, issue) {
@@ -111,6 +113,13 @@ pub(crate) fn evaluate_issue_for_current_source(
             mode: LlmGateMode::parse(&config.quality_gate.llm.mode),
             command: config.quality_gate.llm.command.clone(),
             timeout_ms: config.quality_gate.llm.timeout_ms,
+        },
+        &LlmGateContext {
+            trusted_template: issue_template.body,
+            template_path: issue_template.path.display().to_string(),
+            expected_repository: expected_target,
+            repository_root: repo_root.display().to_string(),
+            verification_commands: config.verification.commands.clone(),
         },
     );
     if !decision.is_dispatchable() {

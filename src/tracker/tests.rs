@@ -321,6 +321,13 @@ fn rich_issue_evidence_hydration_merges_body_comments_prs_and_topology() {
     assert!(description.contains("Issue body evidence."));
     assert!(description.contains("## Shea Symphony Workpad"));
     assert!(description.contains("## Shea Symphony Agent Review Run"));
+    assert_eq!(
+        issue
+            .project_fields
+            .get(crate::model::GITHUB_ISSUE_BODY_FIELD)
+            .and_then(serde_json::Value::as_str),
+        Some("Issue body evidence.")
+    );
     assert_eq!(issue.linked_pull_requests.len(), 1);
     assert_eq!(issue.linked_pull_requests[0].number, Some(9));
     assert_eq!(

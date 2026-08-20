@@ -23,6 +23,7 @@ closure.
 | `template/evidence/review-freshness.md` | `src/review/freshness.rs` | Post-change review validity report |
 | `template/evidence/doctor-triage.md` | `src/doctor/report.rs` | General Doctor finding/repair receipt |
 | `template/evidence/human-review-repair.md` | `src/doctor/report.rs` | Narrow invalid-Human-Review rollback receipt |
+| `template/evidence/forge-revision.md` | `src/commands/forge/revise.rs` | Prepared Todo revision fingerprints before exact content replacement |
 | `template/evidence/merge-run.md` | `src/merge_lane.rs` | Complete merge attempt and readback |
 | `template/evidence/merge-repair.md` | `src/merge_lane.rs` | Repair-only evidence before routing |
 | `template/evidence/forge-rework-run.md` | `src/commands/forge/rework.rs` | Confirmed contract replacement evidence |

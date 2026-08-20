@@ -19,7 +19,7 @@ use commands::debug::debug_report;
 use commands::doctor::{doctor, doctor_repair_human_review};
 use commands::follow_up::create_follow_up;
 use commands::forge::{
-    forge_create, forge_promote, forge_rework, forge_validate, ForgeCreateOptions,
+    forge_create, forge_promote, forge_revise, forge_rework, forge_validate, ForgeCreateOptions,
 };
 use commands::gate::quality_gate;
 use commands::profiles::list_profiles;
@@ -170,7 +170,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             issue_ref,
             state,
             write,
-        } => set_state(workflow_path, issue_ref, state, write),
+            dry_run,
+        } => set_state(workflow_path, issue_ref, state, write, dry_run),
         Command::Workpad {
             workflow_path,
             issue_ref,
@@ -341,6 +342,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             write,
             dry_run,
         }),
+        Command::ForgeRevise { options } => forge_revise(options),
         Command::ForgeRework { options } => forge_rework(options),
         Command::Help(text) => {
             print!("{text}");

@@ -54,6 +54,7 @@ scan is not a substitute for a targeted read.
 - `relationship.add_subissue`: add one native parent/subissue relationship.
 - `issue.create`: create one validated issue contract.
 - `issue.promote`: replace one Backlog seed with a validated executable contract.
+- `issue.revise`: replace one unclaimed Todo contract through the selected executable-Issue gate while preserving state and tracker topology.
 - `issue.rework`: replace one Human Review contract with confirmed Rework scope.
 
 These names describe intent. The selected adapter owns implementation syntax;

@@ -140,6 +140,497 @@ fn forge_rework_records_diagnostic_for_active_human_review_claims() {
     assert_eq!(adapter.operations(), vec!["comment:#282".to_string()]);
 }
 
+fn revision_workflow_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".shea/workflows/shea-symphony.md")
+}
+
+fn revision_issue(blocked: bool) -> TrackerIssue {
+    let mut issue = tracker_issue_with_ref("#554", "Original Todo contract", "Todo");
+    issue.description = Some(forge_contract());
+    issue.assignees = vec!["Alive24".into()];
+    issue.labels = vec!["contract".into()];
+    issue.project_fields.insert(
+        "GitHub Issue State".into(),
+        serde_json::Value::String("OPEN".into()),
+    );
+    issue.project_fields.insert(
+        "Unrelated Field".into(),
+        serde_json::Value::String("preserve me".into()),
+    );
+    if blocked {
+        issue.blocked_by.push(BlockerRef {
+            id: Some("ISSUE_569".into()),
+            identifier: Some("#569".into()),
+            state: Some("closed".into()),
+        });
+    }
+    issue
+}
+
+fn revised_contract() -> String {
+    forge_contract().replace(
+        "Create a validated tracker issue.",
+        "Create a revised validated tracker issue.",
+    )
+}
+
+fn insert_revision_issue(adapter: &RecordingAdapter, blocked: bool) {
+    let issue = revision_issue(blocked);
+    adapter
+        .issues
+        .borrow_mut()
+        .insert(issue.identifier.clone(), issue);
+}
+
+fn revision_confirmation(
+    config: &RuntimeConfig,
+    adapter: &RecordingAdapter,
+    title: &str,
+    markdown: &str,
+) -> String {
+    prepare_forge_revision(
+        &revision_workflow_path(),
+        config,
+        adapter,
+        "#554",
+        title,
+        markdown,
+    )
+    .unwrap()
+    .confirmation_token
+}
+
+fn apply_revision(
+    config: &RuntimeConfig,
+    adapter: &RecordingAdapter,
+    title: &str,
+    markdown: &str,
+    confirmation: String,
+) -> Result<(), Box<dyn std::error::Error>> {
+    forge_revise_with_adapter(
+        None,
+        &revision_workflow_path(),
+        config,
+        adapter,
+        ForgeReviseInput {
+            issue_ref: "#554".into(),
+            title: title.into(),
+            markdown: markdown.into(),
+            operator_confirmation: Some(confirmation),
+            dry_run: false,
+        },
+    )
+}
+
+#[test]
+fn forge_revise_preserves_todo_facts_for_blocked_and_unblocked_issues() {
+    for blocked in [false, true] {
+        let config = test_config();
+        let adapter = RecordingAdapter::default();
+        insert_revision_issue(&adapter, blocked);
+        adapter
+            .linked_pull_requests
+            .borrow_mut()
+            .push(LinkedPullRequest {
+                number: Some(600),
+                url: Some("https://github.com/Alive24/shea-symphony/pull/600".into()),
+                state: Some("OPEN".into()),
+                ..Default::default()
+            });
+        let before = adapter.get_issue("#554").unwrap().unwrap();
+        let body = revised_contract();
+        let confirmation = revision_confirmation(&config, &adapter, "Revised Todo contract", &body);
+
+        apply_revision(
+            &config,
+            &adapter,
+            "Revised Todo contract",
+            &body,
+            confirmation.clone(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            adapter.operations(),
+            vec!["comment:#554", "update_issue_content:#554"]
+        );
+        let after = adapter.get_issue("#554").unwrap().unwrap();
+        assert_eq!(after.normalized_state(), "todo");
+        assert_eq!(after.assignees, before.assignees);
+        assert_eq!(after.labels, before.labels);
+        assert_eq!(after.blocked_by, before.blocked_by);
+        assert_eq!(after.project_fields, before.project_fields);
+        assert_eq!(after.title, "Revised Todo contract");
+        assert_eq!(after.description.as_deref(), Some(body.as_str()));
+
+        apply_revision(
+            &config,
+            &adapter,
+            "Revised Todo contract",
+            &body,
+            confirmation,
+        )
+        .unwrap();
+        assert_eq!(
+            adapter.operations(),
+            vec!["comment:#554", "update_issue_content:#554"]
+        );
+    }
+}
+
+#[test]
+fn forge_revise_dry_run_and_invalid_candidates_never_mutate() {
+    let config = test_config();
+    let adapter = RecordingAdapter::default();
+    insert_revision_issue(&adapter, false);
+
+    forge_revise_with_adapter(
+        None,
+        &revision_workflow_path(),
+        &config,
+        &adapter,
+        ForgeReviseInput {
+            issue_ref: "#554".into(),
+            title: "Revised Todo contract".into(),
+            markdown: revised_contract(),
+            operator_confirmation: None,
+            dry_run: true,
+        },
+    )
+    .unwrap();
+    assert!(adapter.operations().is_empty());
+
+    let error =
+        prepare_forge_revision(&revision_workflow_path(), &config, &adapter, "#554", "", "")
+            .unwrap_err()
+            .to_string();
+    assert!(error.contains("replacement body failed executable issue gate"));
+    assert!(adapter.operations().is_empty());
+}
+
+#[test]
+fn forge_revise_rejects_non_todo_closed_and_all_invalid_claim_shapes() {
+    let config = test_config();
+    for setup in ["non_todo", "closed"] {
+        let adapter = RecordingAdapter::default();
+        let mut issue = revision_issue(false);
+        if setup == "non_todo" {
+            issue.state = "Backlog".into();
+        } else {
+            issue.project_fields.insert(
+                "GitHub Issue State".into(),
+                serde_json::Value::String("CLOSED".into()),
+            );
+        }
+        adapter
+            .issues
+            .borrow_mut()
+            .insert(issue.identifier.clone(), issue);
+        assert!(prepare_forge_revision(
+            &revision_workflow_path(),
+            &config,
+            &adapter,
+            "#554",
+            "Revised Todo contract",
+            &revised_contract(),
+        )
+        .is_err());
+        assert!(adapter.operations().is_empty());
+    }
+
+    for (field, lane) in [
+        ("Main Agent", LaneClaimLane::Main),
+        ("Review Agent", LaneClaimLane::Review),
+        ("Merging Agent", LaneClaimLane::Merge),
+    ] {
+        for shape in ["active", "malformed", "mismatched"] {
+            let adapter = RecordingAdapter::default();
+            let mut issue = revision_issue(false);
+            let value = match shape {
+                "active" => LaneClaim::active(
+                    "#554",
+                    lane,
+                    LaneClaimActor::Codex,
+                    LaneClaimSource::Manual,
+                    1_779_000_900_123,
+                )
+                .render(),
+                "mismatched" => LaneClaim::active(
+                    "#different",
+                    lane,
+                    LaneClaimActor::Codex,
+                    LaneClaimSource::Manual,
+                    1_779_000_900_123,
+                )
+                .with_state(LaneClaimState::Done)
+                .render(),
+                _ => "not-a-claim".into(),
+            };
+            issue
+                .project_fields
+                .insert(field.into(), serde_json::Value::String(value));
+            adapter
+                .issues
+                .borrow_mut()
+                .insert(issue.identifier.clone(), issue);
+            let error = prepare_forge_revision(
+                &revision_workflow_path(),
+                &config,
+                &adapter,
+                "#554",
+                "Revised Todo contract",
+                &revised_contract(),
+            )
+            .unwrap_err()
+            .to_string();
+            assert!(error.contains(shape), "{field} {shape}: {error}");
+            assert!(adapter.operations().is_empty());
+        }
+    }
+
+    let adapter = RecordingAdapter::default();
+    let mut issue = revision_issue(false);
+    issue
+        .project_fields
+        .insert("Main Agent".into(), serde_json::json!({"bad": "claim"}));
+    adapter
+        .issues
+        .borrow_mut()
+        .insert(issue.identifier.clone(), issue);
+    assert!(prepare_forge_revision(
+        &revision_workflow_path(),
+        &config,
+        &adapter,
+        "#554",
+        "Revised Todo contract",
+        &revised_contract(),
+    )
+    .unwrap_err()
+    .to_string()
+    .contains("malformed Main Agent"));
+}
+
+#[test]
+fn forge_revise_allows_terminal_matching_claim_audit_pointers() {
+    let config = test_config();
+    let adapter = RecordingAdapter::default();
+    let mut issue = revision_issue(false);
+    for (field, lane) in [
+        ("Main Agent", LaneClaimLane::Main),
+        ("Review Agent", LaneClaimLane::Review),
+        ("Merging Agent", LaneClaimLane::Merge),
+    ] {
+        let claim = LaneClaim::active(
+            "#554",
+            lane,
+            LaneClaimActor::Codex,
+            LaneClaimSource::Manual,
+            1_779_000_900_123,
+        )
+        .with_state(LaneClaimState::Done);
+        issue
+            .project_fields
+            .insert(field.into(), serde_json::Value::String(claim.render()));
+    }
+    adapter
+        .issues
+        .borrow_mut()
+        .insert(issue.identifier.clone(), issue);
+
+    prepare_forge_revision(
+        &revision_workflow_path(),
+        &config,
+        &adapter,
+        "#554",
+        "Revised Todo contract",
+        &revised_contract(),
+    )
+    .unwrap();
+}
+
+#[test]
+fn forge_revise_fails_closed_on_evidence_edit_and_immediate_drift_failures() {
+    let config = test_config();
+    for failure in ["evidence", "edit", "ambiguous", "drift", "readback"] {
+        let mut adapter = RecordingAdapter::default();
+        match failure {
+            "evidence" => adapter.fail_comment = true,
+            "edit" => adapter.fail_update_content = true,
+            "ambiguous" => adapter.ambiguous_update_content = true,
+            "drift" => adapter.drift_after_comment = true,
+            "readback" => adapter.drift_after_update_content = true,
+            _ => unreachable!(),
+        }
+        insert_revision_issue(&adapter, false);
+        let body = revised_contract();
+        let confirmation = revision_confirmation(&config, &adapter, "Revised Todo contract", &body);
+        let error = apply_revision(
+            &config,
+            &adapter,
+            "Revised Todo contract",
+            &body,
+            confirmation,
+        )
+        .unwrap_err()
+        .to_string();
+        match failure {
+            "evidence" => assert!(error.contains("revision_evidence")),
+            "edit" => assert!(error.contains("not_applied")),
+            "ambiguous" => assert!(error.contains("ambiguous")),
+            "drift" => assert!(error.contains("immediate_pre_edit_recheck")),
+            "readback" => assert!(error.contains("final_readback")),
+            _ => unreachable!(),
+        }
+        if matches!(failure, "evidence" | "drift") {
+            assert!(!adapter
+                .operations()
+                .iter()
+                .any(|operation| operation.starts_with("update_issue_content")));
+        }
+    }
+}
+
+#[test]
+fn forge_revise_recovers_an_edit_that_applied_before_transport_failure() {
+    let config = test_config();
+    let adapter = RecordingAdapter {
+        fail_update_content_after_apply: true,
+        ..Default::default()
+    };
+    insert_revision_issue(&adapter, false);
+    let body = revised_contract();
+    let confirmation = revision_confirmation(&config, &adapter, "Revised Todo contract", &body);
+
+    apply_revision(
+        &config,
+        &adapter,
+        "Revised Todo contract",
+        &body,
+        confirmation,
+    )
+    .unwrap();
+    assert_eq!(
+        adapter.get_issue("#554").unwrap().unwrap().title,
+        "Revised Todo contract"
+    );
+}
+
+#[test]
+fn forge_revise_confirmation_rejects_source_workflow_and_template_drift() {
+    let config = test_config();
+    let adapter = RecordingAdapter::default();
+    insert_revision_issue(&adapter, false);
+    let body = revised_contract();
+    let confirmation = revision_confirmation(&config, &adapter, "Revised Todo contract", &body);
+    adapter.issues.borrow_mut().get_mut("#554").unwrap().title = "Concurrent source edit".into();
+    let error = apply_revision(
+        &config,
+        &adapter,
+        "Revised Todo contract",
+        &body,
+        confirmation,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("stopped at confirmation"));
+    assert!(adapter.operations().is_empty());
+
+    for drift in ["workflow", "template"] {
+        let temp = tempfile::tempdir().unwrap();
+        let workflow_path = temp.path().join("WORKFLOW.md");
+        let template_path = temp.path().join("issue.md");
+        std::fs::copy(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join(".shea/template/issue/executable.md"),
+            &template_path,
+        )
+        .unwrap();
+        std::fs::write(
+            &workflow_path,
+            "---\ntracker:\n  kind: memory\nissue_templates:\n  executable: issue.md\n---\nPrompt",
+        )
+        .unwrap();
+        let workflow = WorkflowDefinition::load(&workflow_path).unwrap();
+        let config = RuntimeConfig::from_workflow(&workflow, &workflow_path).unwrap();
+        let adapter = RecordingAdapter::default();
+        insert_revision_issue(&adapter, false);
+        let prepared = prepare_forge_revision(
+            &workflow_path,
+            &config,
+            &adapter,
+            "#554",
+            "Revised Todo contract",
+            &body,
+        )
+        .unwrap();
+        if drift == "workflow" {
+            std::fs::write(
+                &workflow_path,
+                "---\ntracker:\n  kind: memory\nissue_templates:\n  executable: issue.md\n---\nChanged prompt",
+            )
+            .unwrap();
+        } else {
+            let mut template = std::fs::read_to_string(&template_path).unwrap();
+            template.push_str("\n{% comment %}changed{% endcomment %}\n");
+            std::fs::write(&template_path, template).unwrap();
+        }
+        let error = forge_revise_with_adapter(
+            Some(&workflow),
+            &workflow_path,
+            &config,
+            &adapter,
+            ForgeReviseInput {
+                issue_ref: "#554".into(),
+                title: "Revised Todo contract".into(),
+                markdown: body.clone(),
+                operator_confirmation: Some(prepared.confirmation_token),
+                dry_run: false,
+            },
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            error.contains("stopped at confirmation"),
+            "{drift}: {error}"
+        );
+        assert!(adapter.operations().is_empty());
+    }
+}
+
+#[test]
+fn project_set_state_dry_run_is_truthful_and_mutation_free() {
+    let config = test_config();
+    let adapter = RecordingAdapter::default();
+    let issue = tracker_issue_with_ref("#554", "State preview", "Todo");
+    adapter
+        .issues
+        .borrow_mut()
+        .insert(issue.identifier.clone(), issue);
+
+    set_state_with_adapter(&config, &adapter, "#554", "Todo", false, true).unwrap();
+    set_state_with_adapter(&config, &adapter, "#554", "Agent Review", false, true).unwrap();
+    assert!(
+        set_state_with_adapter(&config, &adapter, "#554", "Human Review", false, true,).is_err()
+    );
+    assert!(set_state_with_adapter(
+        &config,
+        &adapter,
+        "#554",
+        "not-a-configured-state",
+        false,
+        true,
+    )
+    .is_err());
+    assert!(adapter.operations().is_empty());
+    assert_eq!(
+        adapter
+            .get_issue("#554")
+            .unwrap()
+            .unwrap()
+            .normalized_state(),
+        "todo"
+    );
+}
+
 #[test]
 fn manual_main_claim_accepts_rework() {
     let config = test_config();

@@ -24,6 +24,7 @@ const ACTIONS: &[&str] = &[
     "relationship.add_subissue",
     "issue.create",
     "issue.promote",
+    "issue.revise",
     "issue.rework",
 ];
 
@@ -188,6 +189,7 @@ fn validate_adapter(source: &str) -> Result<AdapterMetadata, String> {
         "project set-state",
         "project link-pr",
         "forge validate",
+        "forge revise",
         "--write",
     ] {
         if !body.contains(expected) {

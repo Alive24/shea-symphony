@@ -80,6 +80,7 @@ workpad_templates:
   review_freshness: ../template/evidence/review-freshness.md
   doctor_triage: ../template/evidence/doctor-triage.md
   human_review_repair: ../template/evidence/human-review-repair.md
+  forge_revision: ../template/evidence/forge-revision.md
   merge_run: ../template/evidence/merge-run.md
   merge_repair: ../template/evidence/merge-repair.md
   forge_rework_run: ../template/evidence/forge-rework-run.md

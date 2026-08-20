@@ -656,6 +656,11 @@ fn clap_parser_preserves_subcommand_specific_help() {
     assert!(forge_promote.contains("Usage: shea-symphony forge promote"));
     assert!(forge_promote.contains("--operator-confirmation"));
     assert!(forge_promote.contains("--readback-summary"));
+
+    let forge_revise = help_text(&["forge", "revise", "--help"]);
+    assert!(forge_revise.contains("Usage: shea-symphony forge revise"));
+    assert!(forge_revise.contains("--operator-confirmation"));
+    assert!(forge_revise.contains("--dry-run"));
 }
 
 #[test]
@@ -700,9 +705,48 @@ fn clap_parser_preserves_write_intent_for_mutating_commands() {
             workflow_path: PathBuf::from("config/WORKFLOW.md"),
             issue_ref: "#4".into(),
             state: "agent_review".into(),
-            write: true
+            write: true,
+            dry_run: false,
         }
     );
+}
+
+#[test]
+fn clap_parser_preserves_set_state_dry_run_and_rejects_write_combination() {
+    assert_eq!(
+        parse(&[
+            "project",
+            "set-state",
+            "config/WORKFLOW.md",
+            "#4",
+            "agent_review",
+            "--dry-run"
+        ]),
+        Command::SetState {
+            workflow_path: PathBuf::from("config/WORKFLOW.md"),
+            issue_ref: "#4".into(),
+            state: "agent_review".into(),
+            write: false,
+            dry_run: true,
+        }
+    );
+
+    let error = Command::parse(
+        [
+            "project",
+            "set-state",
+            "config/WORKFLOW.md",
+            "#4",
+            "agent_review",
+            "--write",
+            "--dry-run",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect(),
+    )
+    .unwrap_err();
+    assert!(error.contains("cannot be used with"));
 }
 
 #[test]

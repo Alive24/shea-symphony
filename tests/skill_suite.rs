@@ -188,6 +188,7 @@ fn issue_forge_is_a_short_phase_router_with_complete_guidance() {
             "references/creation.md".into(),
             "references/discussion.md".into(),
             "references/promotion.md".into(),
+            "references/revision.md".into(),
             "references/rework.md".into(),
             "references/tracker-hygiene.md".into(),
         ])
@@ -202,6 +203,7 @@ fn issue_forge_is_a_short_phase_router_with_complete_guidance() {
         "Prepare, Confirm, Execute",
         "`issue.create`",
         "`issue.promote`",
+        "`issue.revise`",
         "`issue.rework`",
         "Subissue Human Review Exception",
     ] {
@@ -220,7 +222,7 @@ fn retained_templates_have_taxonomy_and_identified_consumers() {
         .into_iter()
         .filter(|path| path.extension().is_some_and(|extension| extension == "md"))
         .collect::<Vec<_>>();
-    assert_eq!(files.len(), 26);
+    assert_eq!(files.len(), 27);
     for path in files {
         let relative = path.strip_prefix(repo_path(".shea")).unwrap();
         let relative = relative.to_string_lossy();

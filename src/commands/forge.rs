@@ -12,7 +12,9 @@ use shea_symphony::{
 use std::path::PathBuf;
 
 use crate::cli::ForgeStatusArg;
+use crate::commands::gate::evaluate_issue_for_current_source;
 mod create;
+mod revise;
 mod rework;
 
 #[cfg(test)]
@@ -23,6 +25,10 @@ pub(crate) use create::{
     ForgeCreateWriteInput,
 };
 pub(crate) use create::{forge_create, ForgeCreateOptions};
+
+pub(crate) use revise::{forge_revise, ForgeReviseOptions};
+#[cfg(test)]
+pub(crate) use revise::{forge_revise_with_adapter, prepare_forge_revision, ForgeReviseInput};
 
 pub(crate) use rework::{forge_rework, ForgeReworkOptions};
 #[cfg(test)]
@@ -484,6 +490,28 @@ pub(crate) fn forge_validation_report(
         intended_assignees,
         &ForgeRelationshipPlan::default(),
     )
+}
+
+pub(crate) fn forge_validation_report_for_existing_todo(
+    title: &str,
+    markdown: &str,
+    config: &RuntimeConfig,
+    source: &TrackerIssue,
+) -> Result<ForgeValidationReport, Box<dyn std::error::Error>> {
+    let mut candidate = source.clone();
+    candidate.title = title.to_string();
+    candidate.description = Some(markdown.to_string());
+    candidate.state = config.tracker.state_map.todo.clone();
+    candidate.project_fields.insert(
+        shea_symphony::model::GITHUB_ISSUE_BODY_FIELD.into(),
+        serde_json::Value::String(markdown.to_string()),
+    );
+    let decision = evaluate_issue_for_current_source(config, &candidate)?;
+    Ok(ForgeValidationReport {
+        title: title.to_string(),
+        question: next_clarification_question(&decision),
+        decision,
+    })
 }
 
 pub(crate) fn forge_validation_report_with_relationships(

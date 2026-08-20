@@ -19,13 +19,13 @@ Routine native subissue PASS routes to `Merging`, not `Human Review`; the parent
 
 ## Invocation authorization
 
-An operator invocation that names exactly one issue, such as `$shea-agent-review #569`, is explicit confirmation for one wrapper-owned Agent Review run using the backend resolved from the active workflow. It authorizes the wrapper to:
+An operator invocation bound to exactly one operator-selected issue—either named in the invocation or uniquely established by the operator in the current task—is explicit confirmation for one wrapper-owned Agent Review run using the backend resolved from the active workflow. It authorizes the wrapper to:
 
-- send only the named issue contract, linked ready PR and diff, canonical workspace repository content, and required Main handoff/evidence to that backend;
+- send only the selected issue contract, linked ready PR and diff, canonical workspace repository content, and required Main handoff/evidence to that backend;
 - allow workflow-authorized read-only repository inspection plus wrapper-owned local logs, ledger, scratch, and localhost language-server access;
 - write the Review claim, append Review evidence, update supported non-UAT checklist evidence, and make the decision-derived Review state transition last.
 
-After preflight proves the exact issue, PR, workspace, backend, and bounded actions, launch without asking the operator for the same authorization again. Require new explicit authorization if any of those resolved identities changes after preflight, the backend requests tools or write authority beyond configured read-only Review, content would cross the named repository/PR boundary, or standalone preparation is required. This invocation does not authorize workflow/backend changes, implementation, Human approval, or Merge.
+An issue discovered only through queue scanning, dry-run, or preflight is not operator-selected; show the prepared effect and obtain confirmation before launching it. Otherwise, after preflight proves the exact issue, PR, workspace, backend, and bounded actions, launch without asking the operator for the same authorization again. Require new explicit authorization if any of those resolved identities changes after preflight, the backend requests tools or write authority beyond configured read-only Review, content would cross the selected repository/PR boundary, or standalone preparation is required. This invocation does not authorize workflow/backend changes, implementation, Human approval, or Merge.
 
 ## Launch and read back
 

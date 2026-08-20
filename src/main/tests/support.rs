@@ -159,6 +159,11 @@ pub(crate) struct RecordingAdapter {
     pub(crate) linked_pull_requests: RefCell<Vec<shea_symphony::model::LinkedPullRequest>>,
     pub(crate) fail_workpad: bool,
     pub(crate) fail_comment: bool,
+    pub(crate) fail_update_content: bool,
+    pub(crate) fail_update_content_after_apply: bool,
+    pub(crate) ambiguous_update_content: bool,
+    pub(crate) drift_after_update_content: bool,
+    pub(crate) drift_after_comment: bool,
     pub(crate) fail_link_pr: bool,
     pub(crate) fail_state_after_apply: bool,
     pub(crate) fail_project_field_after_apply: bool,
@@ -178,6 +183,11 @@ impl Default for RecordingAdapter {
             linked_pull_requests: RefCell::new(Vec::new()),
             fail_workpad: false,
             fail_comment: false,
+            fail_update_content: false,
+            fail_update_content_after_apply: false,
+            ambiguous_update_content: false,
+            drift_after_update_content: false,
+            drift_after_comment: false,
             fail_link_pr: false,
             fail_state_after_apply: false,
             fail_project_field_after_apply: false,
@@ -299,13 +309,45 @@ impl TrackerAdapter for RecordingAdapter {
         title: &str,
         body: &str,
     ) -> Result<(), shea_symphony::tracker::TrackerError> {
+        self.operations
+            .borrow_mut()
+            .push(format!("update_issue_content:{issue_ref}"));
+        if self.fail_update_content {
+            return Err(
+                shea_symphony::tracker::TrackerError::IntegrationUnavailable(
+                    "simulated issue edit failure".into(),
+                ),
+            );
+        }
         if let Some(issue) = self.issues.borrow_mut().get_mut(issue_ref) {
             issue.title = title.to_string();
             issue.description = Some(body.to_string());
         }
-        self.operations
-            .borrow_mut()
-            .push(format!("update_issue_content:{issue_ref}"));
+        if self.ambiguous_update_content {
+            if let Some(issue) = self.issues.borrow_mut().get_mut(issue_ref) {
+                issue.title = "concurrent edit".into();
+            }
+            return Err(
+                shea_symphony::tracker::TrackerError::IntegrationUnavailable(
+                    "simulated ambiguous issue edit failure".into(),
+                ),
+            );
+        }
+        if self.drift_after_update_content {
+            if let Some(issue) = self.issues.borrow_mut().get_mut(issue_ref) {
+                issue.project_fields.insert(
+                    "Concurrent Final Readback Edit".into(),
+                    serde_json::Value::String("changed after content edit".into()),
+                );
+            }
+        }
+        if self.fail_update_content_after_apply {
+            return Err(
+                shea_symphony::tracker::TrackerError::IntegrationUnavailable(
+                    "GitHub issue edit failed after apply: HTTP 502 Bad Gateway".into(),
+                ),
+            );
+        }
         Ok(())
     }
 
@@ -325,6 +367,7 @@ impl TrackerAdapter for RecordingAdapter {
             markdown.contains("## Promotion Note")
                 || markdown.contains("## Shea Symphony Agent Review Run")
                 || markdown.contains("## Shea Symphony Rework Run")
+                || markdown.contains("## Shea Symphony Todo Revision")
                 || markdown.contains("## Shea Symphony Merge Run")
                 || markdown.contains("## Shea Symphony Doctor Triage")
         );
@@ -338,6 +381,12 @@ impl TrackerAdapter for RecordingAdapter {
             }
             description.push_str(markdown);
             issue.description = Some(description);
+            if self.drift_after_comment {
+                issue.project_fields.insert(
+                    "Concurrent Edit".into(),
+                    serde_json::Value::String("appeared after revision evidence".into()),
+                );
+            }
         }
         if self.fail_comment_after_apply {
             return Err(

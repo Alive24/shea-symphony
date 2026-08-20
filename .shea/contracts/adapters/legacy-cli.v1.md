@@ -52,10 +52,13 @@ exists, then add `--write` only during Execute.
 | `relationship.add_subissue` | `CLI project relationship add-subissue WORKFLOW PARENT CHILD --write` | `relationships.read` for both issues |
 | `issue.create` | `CLI forge create --workflow WORKFLOW` with the prepared contract and `--write` | `issue.read` for the returned issue |
 | `issue.promote` | `CLI forge promote ISSUE --workflow WORKFLOW` with the prepared contract, confirmation evidence, and `--write` | `issue.read` |
+| `issue.revise` | `CLI forge revise ISSUE --workflow WORKFLOW` with the dry-run confirmation token and `--write` | `issue.read`, `relationships.read`, and `pull_request.read` |
 | `issue.rework` | `CLI forge rework ISSUE --workflow WORKFLOW` with the prepared contract, review evidence, confirmation, and `--write` | `issue.read` |
 
 The Legacy adapter additionally supports `CLI forge validate` as the read-only
-quality preparation surface for create, promote, and rework decisions.
+quality preparation surface for create, promote, revise, and rework decisions.
+`CLI forge revise ... --dry-run` produces the confirmation token bound to its
+source, target, workflow, and selected template fingerprints.
 
 ## Legacy Failure Mapping
 

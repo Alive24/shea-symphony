@@ -1,6 +1,6 @@
 ---
 name: shea-issue-forge
-description: Shape rough operator intent into a quality-gated Shea issue through focused discussion, explicit confirmation, and guarded creation, promotion, or rework.
+description: Shape rough operator intent into a quality-gated Shea issue through focused discussion, explicit confirmation, and guarded creation, promotion, Todo revision, or rework.
 ---
 
 # Shea Issue Forge
@@ -20,7 +20,8 @@ through the active workflow capability and its selected adapter.
    freshness claim, temporary draft write, or tracker mutation.
 4. Read only the mutation reference that matches the confirmed action:
    [creation.md](references/creation.md),
-   [promotion.md](references/promotion.md), or
+   [promotion.md](references/promotion.md),
+   [revision.md](references/revision.md), or
    [rework.md](references/rework.md).
 
 ## Authority
@@ -35,5 +36,5 @@ Never bypass the quality gate, duplicate an issue when tracker reads are
 unavailable, or modify implementation code. Show the complete prepared effect
 and obtain explicit confirmation before a guarded mutation unless the operator
 directly supplied a complete body and exact mutation instruction. Creation,
-promotion, or the final Rework state transition is the phase's final mutation;
+promotion, Todo revision, or the final Rework state transition is the phase's final mutation;
 perform targeted readback only afterward.

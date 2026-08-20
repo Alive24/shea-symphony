@@ -28,11 +28,11 @@ use crate::orchestration::{
 
 mod write;
 
-#[cfg(test)]
-pub(crate) use write::link_pr_with_adapter;
 pub(crate) use write::{
     add_to_project, append_timeline_comment, link_pr, set_state, upsert_workpad,
 };
+#[cfg(test)]
+pub(crate) use write::{link_pr_with_adapter, set_state_with_adapter};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ProjectStateOptions {

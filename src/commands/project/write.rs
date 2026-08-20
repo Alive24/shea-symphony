@@ -1,8 +1,9 @@
 use std::path::PathBuf;
 
-use shea_symphony::model::normalize_state;
 use shea_symphony::review::transition_allowed_for_main_agent;
-use shea_symphony::tracker::{adapter_from_config, TrackerAdapter, TrackerError};
+use shea_symphony::tracker::{
+    adapter_from_config, resolve_configured_tracker_state, TrackerAdapter, TrackerError,
+};
 
 use crate::lanes::main_loop::{
     linked_pull_requests_contain, native_linked_pull_requests_contain,
@@ -19,43 +20,109 @@ pub(crate) fn set_state(
     issue_ref: String,
     state: String,
     write: bool,
+    dry_run: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    require_write_intent(write)?;
-    if !transition_allowed_for_main_agent(&normalize_state(&state)) {
-        return Err("main implementation agent cannot set Human Review".into());
+    if write && dry_run {
+        return Err("project set-state cannot use --write and --dry-run together".into());
+    }
+    if !write && !dry_run {
+        require_write_intent(false)?;
     }
     let config = load_config(&workflow_path)?;
     let adapter = adapter_from_config(&config);
-    let initial_issue = adapter.get_issue(&issue_ref)?;
-    let from_state = initial_issue
-        .as_ref()
-        .map(|issue| issue.state.clone())
-        .filter(|current| !current.is_empty());
-    let outcome = set_state_with_recovery(
+    set_state_with_adapter(
+        &config,
         adapter.as_ref(),
         &issue_ref,
-        initial_issue.as_ref(),
         &state,
+        write,
+        dry_run,
+    )
+}
+
+pub(crate) fn set_state_with_adapter(
+    config: &shea_symphony::config::RuntimeConfig,
+    adapter: &dyn TrackerAdapter,
+    issue_ref: &str,
+    state: &str,
+    write: bool,
+    dry_run: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let target = match resolve_configured_tracker_state(&config.tracker.state_map, state) {
+        Ok(target) => target,
+        Err(error) => {
+            if dry_run {
+                println!("set_state_dry_run=rejected issue_ref={issue_ref} reason={error:?}");
+            }
+            return Err(error.into());
+        }
+    };
+    if !transition_allowed_for_main_agent(target.canonical_key()) {
+        let reason = "main implementation agent cannot set Human Review";
+        if dry_run {
+            println!("set_state_dry_run=rejected issue_ref={issue_ref} reason={reason:?}");
+        }
+        return Err(reason.into());
+    }
+    let initial_issue = adapter.get_issue(issue_ref)?;
+    let Some(initial_issue) = initial_issue else {
+        let reason = format!("issue not found: {issue_ref}");
+        if dry_run {
+            println!("set_state_dry_run=rejected issue_ref={issue_ref} reason={reason:?}");
+        }
+        return Err(reason.into());
+    };
+    let current =
+        match resolve_configured_tracker_state(&config.tracker.state_map, &initial_issue.state) {
+            Ok(current) => current,
+            Err(error) => {
+                if dry_run {
+                    println!("set_state_dry_run=rejected issue_ref={issue_ref} reason={error:?}");
+                }
+                return Err(error.into());
+            }
+        };
+    if dry_run {
+        let outcome = if current.canonical_key() == target.canonical_key() {
+            "already_applied"
+        } else {
+            "would_change"
+        };
+        println!(
+            "set_state_dry_run={outcome} issue_ref={issue_ref} from={:?} to={:?} tracker_mutation=false",
+            current.display_value(),
+            target.display_value()
+        );
+        return Ok(());
+    }
+    require_write_intent(write)?;
+    let from_state = (!initial_issue.state.is_empty()).then_some(initial_issue.state.clone());
+    let outcome = set_state_with_recovery(
+        adapter,
+        issue_ref,
+        Some(&initial_issue),
+        target.canonical_key(),
         "state_change",
     )?;
-    reconcile_main_handoff_runtime_state(&config, &issue_ref, &state)?;
+    reconcile_main_handoff_runtime_state(config, issue_ref, target.display_value())?;
     if outcome.should_record_audit() {
         append_tracker_mutation_audit(
-            &config,
+            config,
             TrackerMutationAudit {
                 command: "set-state",
                 mutation_type: "state_change",
-                issue_ref: Some(&issue_ref),
+                issue_ref: Some(issue_ref),
                 target: None,
                 from_state,
-                to_state: Some(state.clone()),
+                to_state: Some(target.display_value().to_string()),
                 reason: "explicit CLI state update",
             },
         );
     }
     println!(
-        "set_state={} issue_ref={issue_ref} state={state}",
-        outcome.as_str()
+        "set_state={} issue_ref={issue_ref} state={}",
+        outcome.as_str(),
+        target.display_value()
     );
     Ok(())
 }

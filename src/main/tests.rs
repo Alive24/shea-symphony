@@ -20,16 +20,17 @@ use super::commands::doctor::{
 };
 use super::commands::forge::{
     apply_forge_relationship_plan, find_duplicate_issue_title, forge_create_requires_assignee,
-    forge_missing_categories, forge_promote, forge_rework_with_adapter, forge_validation_report,
-    render_forge_create_success, render_promotion_note, validate_forge_create_contract,
+    forge_missing_categories, forge_promote, forge_revise_with_adapter, forge_rework_with_adapter,
+    forge_validation_report, prepare_forge_revision, render_forge_create_success,
+    render_promotion_note, validate_forge_create_contract,
     validate_forge_create_report_with_assignees, verify_forge_created_issue_status,
     write_forge_created_issue, ForgeCreateResult, ForgeCreateWriteInput, ForgePromoteInput,
-    ForgeRelationshipPlan, ForgeReworkInput, PromotionNoteInput,
+    ForgeRelationshipPlan, ForgeReviseInput, ForgeReworkInput, PromotionNoteInput,
 };
 use super::commands::gate::live_missing_assignee_gate_blocker;
 use super::commands::project::{
     filter_issues_by_state, link_pr_with_adapter, project_state_issues_for_scope,
-    render_project_state_json, render_state_summary, ProjectStateOptions,
+    render_project_state_json, render_state_summary, set_state_with_adapter, ProjectStateOptions,
 };
 use super::commands::session::{
     agent_session_backend_spec, lane_claim_for_manual_worker, matching_lane_claim_for_session,

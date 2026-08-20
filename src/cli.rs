@@ -11,7 +11,9 @@ use shea_symphony::tracker::ProjectFieldAssignment;
 
 use crate::commands::autopilot::AutopilotLoopOptions;
 use crate::commands::doctor::{DoctorAction, DoctorOptions, DoctorRepairIssueOptions};
-use crate::commands::forge::{ForgeRelationshipPlan, ForgeReworkOptions, PromotionNoteInput};
+use crate::commands::forge::{
+    ForgeRelationshipPlan, ForgeReviseOptions, ForgeReworkOptions, PromotionNoteInput,
+};
 use crate::commands::project::ProjectStateOptions;
 use crate::commands::session::AgentSessionLaneArg;
 use crate::lanes::main_loop::RunLoopOptions;
@@ -142,6 +144,7 @@ pub(crate) enum Command {
         issue_ref: String,
         state: String,
         write: bool,
+        dry_run: bool,
     },
     Workpad {
         workflow_path: PathBuf,
@@ -301,6 +304,9 @@ pub(crate) enum Command {
         relationships: ForgeRelationshipPlan,
         write: bool,
         dry_run: bool,
+    },
+    ForgeRevise {
+        options: ForgeReviseOptions,
     },
     ForgeRework {
         options: ForgeReworkOptions,
@@ -1134,10 +1140,10 @@ struct SetStateArgs {
     workflow_path: PathBuf,
     issue_ref: String,
     state: String,
-    #[arg(long)]
+    #[arg(long, conflicts_with = "dry_run")]
     write: bool,
-    #[arg(long = "dry-run")]
-    _dry_run: bool,
+    #[arg(long = "dry-run", conflicts_with = "write")]
+    dry_run: bool,
 }
 
 #[derive(Debug, Args)]
@@ -1418,6 +1424,7 @@ struct ForgeArgs {
 enum ForgeCommandArgs {
     Create(ForgeCreateArgs),
     Promote(ForgePromoteArgs),
+    Revise(ForgeReviseArgs),
     Rework(ForgeReworkArgs),
     Validate(ForgeValidateArgs),
 }
@@ -1485,6 +1492,23 @@ struct ForgeReworkArgs {
     #[arg(long)]
     write: bool,
     #[arg(long = "dry-run")]
+    dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+struct ForgeReviseArgs {
+    issue_ref: String,
+    #[arg(long, default_value = ".shea/workflows/shea-symphony.md")]
+    workflow: PathBuf,
+    #[arg(long)]
+    title: String,
+    #[command(flatten)]
+    markdown: ForgeMarkdownArgs,
+    #[arg(long = "operator-confirmation")]
+    operator_confirmation: Option<String>,
+    #[arg(long, conflicts_with = "dry_run")]
+    write: bool,
+    #[arg(long = "dry-run", conflicts_with = "write")]
     dry_run: bool,
 }
 
@@ -1666,6 +1690,7 @@ fn command_from_project_args(command: ProjectCommandArgs) -> Result<Command, Str
             issue_ref: args.issue_ref,
             state: args.state,
             write: args.write,
+            dry_run: args.dry_run,
         }),
         ProjectCommandArgs::LinkPr(args) => Ok(Command::LinkPr {
             workflow_path: args.workflow_path,
@@ -1872,6 +1897,17 @@ impl TryFrom<Cli> for Command {
                             },
                             write: args.write,
                             dry_run: args.dry_run,
+                        }),
+                        ForgeCommandArgs::Revise(args) => Ok(Self::ForgeRevise {
+                            options: ForgeReviseOptions {
+                                workflow_path: args.workflow,
+                                issue_ref: args.issue_ref,
+                                title: args.title,
+                                markdown: read_forge_markdown_arg(args.markdown)?,
+                                operator_confirmation: args.operator_confirmation,
+                                write: args.write,
+                                dry_run: args.dry_run,
+                            },
                         }),
                         ForgeCommandArgs::Rework(args) => Ok(Self::ForgeRework {
                             options: ForgeReworkOptions {
@@ -2108,7 +2144,7 @@ fn usage() -> String {
         "  create-follow-up            Create an operator follow-up issue",
         "",
         "Issue Forge:",
-        "  forge                       Validate, create, or promote issue contracts",
+        "  forge                       Validate, create, promote, revise, or rework issue contracts",
         "",
         "Reserved lifecycle topology:",
         "  run                         Reserved for future all-lane automatic orchestration",

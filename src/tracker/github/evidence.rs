@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::config::RuntimeConfig;
 use crate::model::{
     normalize_state, BlockerRef, LinkedPullRequest, LinkedPullRequestSource, TrackerIssue,
+    GITHUB_ISSUE_BODY_FIELD,
 };
 
 use super::super::TrackerError;
@@ -59,6 +60,12 @@ pub(in crate::tracker) fn merge_github_issue_evidence(
         issue.project_fields.insert(
             "GitHub Issue State".into(),
             serde_json::Value::String(issue_state.to_string()),
+        );
+    }
+    if let Some(body) = content.get("body").and_then(serde_json::Value::as_str) {
+        issue.project_fields.insert(
+            GITHUB_ISSUE_BODY_FIELD.into(),
+            serde_json::Value::String(body.to_string()),
         );
     }
 
@@ -144,6 +151,7 @@ fn is_shea_symphony_timeline_comment(body: &str) -> bool {
         "## Shea Symphony Merge Run",
         "## Shea Symphony Human Review Decision",
         "## Shea Symphony Doctor Triage",
+        "## Shea Symphony Todo Revision",
         "## Manual Agent Review Evidence",
     ]
     .iter()

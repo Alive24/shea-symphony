@@ -159,6 +159,47 @@ fn parses_forge_rework_flags() {
 }
 
 #[test]
+fn parses_forge_revise_preview_and_confirmation_flags() {
+    let preview = Command::parse(vec![
+        "forge".into(),
+        "revise".into(),
+        "#554".into(),
+        "--workflow".into(),
+        "fixtures/test-workflow.md".into(),
+        "--title".into(),
+        "Revised Todo contract".into(),
+        "--body".into(),
+        forge_contract(),
+        "--dry-run".into(),
+    ])
+    .unwrap();
+    let Command::ForgeRevise { options } = preview else {
+        panic!("expected forge revise command");
+    };
+    assert_eq!(options.issue_ref, "#554");
+    assert_eq!(options.title, "Revised Todo contract");
+    assert!(options.operator_confirmation.is_none());
+    assert!(!options.write);
+    assert!(options.dry_run);
+
+    let error = Command::parse(vec![
+        "forge".into(),
+        "revise".into(),
+        "#554".into(),
+        "--title".into(),
+        "Revised Todo contract".into(),
+        "--body".into(),
+        forge_contract(),
+        "--operator-confirmation".into(),
+        "todo-revise-1234".into(),
+        "--write".into(),
+        "--dry-run".into(),
+    ])
+    .unwrap_err();
+    assert!(error.contains("cannot be used with"));
+}
+
+#[test]
 fn parses_link_pr_flags() {
     let command = Command::parse(vec![
         "project".into(),

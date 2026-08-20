@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+/// Synthetic evidence field carrying the exact GitHub issue body before workpad/timeline merging.
+pub const GITHUB_ISSUE_BODY_FIELD: &str = "GitHub Issue Body";
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlockerRef {
     pub id: Option<String>,

@@ -56,11 +56,11 @@ Required behavior and safety semantics must instead be expressed through the new
 
 The corrected **Draft** milestone sources permit deliberate reuse or extraction of bounded Rust DTOs, parsers, tracker/Git adapters, event normalization, helpers, and focused tests when ownership is reviewed, the component is protocol-independent or otherwise fits the new typed boundary, and focused coverage travels with it. Reuse is not the default migration strategy and must not preserve old lane/runtime ownership, hidden state authority, broad command APIs, or external effects inside deterministic Workflow code.
 
-`RUNTIME-ROLE-MAPPING.md`, `CODE-OWNERSHIP-MAP.md`, `TRACKER-TRANSITION-ACTIVITY.md`, `APP-CLI-SPLIT.md`, and T2607-08 therefore treat 2606 behavior, tests, protocols, and operational evidence as acceptance inputs—not reusable orchestration/runtime substrate. Any thin admin/debug entrypoint must be new 2607 code over new Temporal APIs; it may share bounded reviewed types or helpers, but must not retain, rewire, call, embed, or wrap the 2606 product commands or lane implementation.
+`RUNTIME-ROLE-MAPPING.md`, `CODE-OWNERSHIP-MAP.md`, T2607-04, `APP-CLI-SPLIT.md`, and T2607-08 therefore treat 2606 behavior, tests, protocols, and operational evidence as acceptance inputs—not reusable orchestration/runtime substrate. Any thin admin/debug entrypoint must be new 2607 code over new Temporal APIs; it may share bounded reviewed types or helpers, but must not retain, rewire, call, embed, or wrap the 2606 product commands or lane implementation.
 
 ## Retirement criteria
 
-The active 2606 bootstrap can be retired only when current main supplies and verifies the complete replacement path. **Tracking (verified 2026-07-28):** #502 is Todo and is the next T2607-03 Temporal-authoritative start slice; no Issues are promoted for the remaining T2607-04 slices, T2607-05/06, T2607-07 product integration, or T2607-08. Workspace/install decisions remain with ADR 0005 plus T2607-07/T2607-08; legacy App Backlog issues #466 and #468 are not current 2607 execution. At minimum:
+The active 2606 bootstrap can be retired only when current main supplies and verifies the complete replacement path. Live progress is tracked by the milestone `STATUS.md` and configured Project; this architecture page owns only the retirement contract. Workspace/install decisions remain with ADR 0005 plus T2607-07/T2607-08. At minimum:
 
 1. Temporal and Coordinator start/reconcile executable issue episodes with one durable decision owner per issue.
 2. Main, Rework, Review, Human Review validation, Merge, Doctor, tracker commits, and local work run through typed Activity and operator-action contracts rather than 2606 commands or lane loops.

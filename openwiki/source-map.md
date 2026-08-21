@@ -53,10 +53,10 @@ Other `.shea` runtime, artifact, log, worktree, local, app, and binary trees are
 2. `TEMPORAL-SPINE.md` and ADR 0006 — **Draft/Proposed** runtime target.
 3. `WORKFLOW-ACTIVATION.md` — **Draft** episode and reconciliation contract; pure identity slice is implemented.
 4. `LOCAL-STATE-DB.md` — **Draft** detailed contract; ADR 0007 is **Accepted** and several slices are implemented.
-5. `TRACKER-TRANSITION-ACTIVITY.md` — explicitly **Partially implemented**.
+5. `implementation/T2607-04-tracker-transition-activity.md` — tracker commit mechanics and the partially implemented transition contract.
 6. `ISSUE-WORKFLOW-STATE.md`, `AGENT-ACTIVITY-CONTRACT.md`, `ACTIVITY-ERROR-TAXONOMY.md`, `TEMPORAL-CONCURRENCY.md`, `TASK-QUEUES.md`, `ISSUE-WORKFLOW.md`, and `RUNTIME-ROLE-MAPPING.md` — **Draft** execution contracts synthesized in [2607 execution contracts](architecture/execution-contracts.md), not current behavior.
-7. implementation T2607-05 and T2607-06 — **Draft** work packages for the Activity boundary and state machine; registration or DTO seams do not satisfy them.
-8. `implementation/README.md` and T2607-01 through T2607-08 — dependency-aware packages, not proof of live tracker status.
+7. implementation T2607-05 and `T2607-06-issue-workflow-state-machine.md` — **Draft** packages for agent Activities and workflow routing; registration or DTO seams do not satisfy them.
+8. `implementation/README.md` and T2607-01 through T2607-08 — dependency-aware packages, not proof of live tracker status. Read `STATUS.md` and the configured Project for current progress.
 
 For 2606 behavior, start from `docs/README.md`, the selected repository Skill,
 `.shea/contracts/workflow-capability.v1.md`, its legacy adapter, and current

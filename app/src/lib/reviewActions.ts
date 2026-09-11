@@ -37,7 +37,7 @@ export function reviewLifecycle(status: ReviewStatus | null, issue: string): Rev
   const running = status.running_slots?.find((entry) => entry.issue_identifier === issue);
   if (running) return { ...blocked, label: 'Review job recorded', runId: running.job_id, detail: 'A running job or claim exists. Check its progress before dispatching another Review.' };
   const recent = status.recent_jobs?.find((entry) => entry.issue_identifier === issue);
-  if (recent) return { ...blocked, label: 'Publication unverified', runId: recent.job_id, detail: 'A backend result exists without a final publication receipt. Use Shea Doctor to inspect its evidence.' };
+  if (recent) return { ...blocked, label: 'Publication unverified', runId: recent.job_id, detail: 'This historical backend result has no publication receipt. Inspect its existing evidence with Shea Doctor. Preparing a fresh Review only checks current eligibility; it does not publish or accept the historical result.', canStart: tracker?.state === 'Agent Review' };
   return { ...blocked, label: 'Not dispatched', detail: 'Agent Review status alone does not launch the reviewer.', canStart: tracker?.state === 'Agent Review' };
 }
 

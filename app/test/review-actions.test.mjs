@@ -61,3 +61,11 @@ test('live Review and Rework states survive a completed local worktree', () => {
   }
   assert.equal(mergeIssueDetail(undefined, local), local);
 });
+
+
+test('a historical result does not prevent read-only preflight for a new handoff', () => {
+  const result = reviewLifecycle({issues:[{identifier:'#5',state:'Agent Review'}], recent_jobs:[{issue_identifier:'#5',job_state:'Completed',review_outcome:'NeedsRework'}]}, '#5');
+  assert.equal(result.label, 'Publication unverified');
+  assert.equal(result.canStart, true);
+  assert.equal(result.canRecover, false);
+});

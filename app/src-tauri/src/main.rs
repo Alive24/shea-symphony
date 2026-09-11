@@ -47,12 +47,15 @@ fn main() {
             read_surfaces::get_operator_overview,
             read_surfaces::get_read_surface,
             read_surfaces::get_codex_transcript,
+            read_surfaces::get_claude_transcript,
             github::get_issue_timeline,
             handoff_prompts::get_handoff_prompt,
             external_links::open_codex_thread,
+            external_links::open_agent_session,
             external_links::open_github_source,
             external_links::open_handoff_target,
             external_links::open_codex_handoff,
+            external_links::open_claude_handoff,
             temporal_health::get_temporal_runtime_health
         ])
         .run(tauri::generate_context!())

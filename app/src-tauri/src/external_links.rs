@@ -7,6 +7,14 @@ pub fn open_codex_thread(deep_link: String) -> Result<(), String> {
     open_external_url(&deep_link)
 }
 
+/// Opens one agent session deep link. Codex and Claude Code are peers here:
+/// the scheme selects the validator, and neither side is a fallback for the other.
+#[tauri::command]
+pub fn open_agent_session(deep_link: String) -> Result<(), String> {
+    validate_agent_session_link(&deep_link)?;
+    open_external_url(&deep_link)
+}
+
 #[tauri::command]
 pub fn open_github_source(url: String) -> Result<(), String> {
     validate_github_source_url(&url)?;
@@ -24,6 +32,37 @@ pub fn open_codex_handoff(prompt: String, worktree_path: Option<String>) -> Resu
     validate_handoff_prompt(&prompt)?;
     let worktree = validate_handoff_worktree_path(worktree_path)?;
     open_external_url(&codex_new_thread_link(&prompt, worktree.as_ref()))
+}
+
+#[tauri::command]
+pub fn open_claude_handoff(prompt: String, worktree_path: Option<String>) -> Result<(), String> {
+    validate_handoff_prompt(&prompt)?;
+    let worktree = validate_handoff_worktree_path(worktree_path)?;
+    open_external_url(&claude_new_session_link(&prompt, worktree.as_ref()))
+}
+
+fn validate_agent_session_link(deep_link: &str) -> Result<(), String> {
+    if deep_link.starts_with("codex://") {
+        validate_codex_thread_link(deep_link)
+    } else if deep_link.starts_with("claude://") {
+        validate_claude_session_link(deep_link)
+    } else {
+        Err("Only codex:// and claude:// agent session links can be opened.".to_string())
+    }
+}
+
+/// Claude Desktop imports an existing CLI session from `claude://resume?session=<uuid>`.
+/// `claude://code/continue` takes a desktop-owned `local_*` id instead, so it cannot
+/// stand in for a transcript recorded by the Claude Code lane backend.
+fn validate_claude_session_link(deep_link: &str) -> Result<(), String> {
+    let session_id = deep_link
+        .strip_prefix("claude://resume?session=")
+        .ok_or_else(|| "Only claude://resume?session links can be opened.".to_string())?;
+    if is_uuid_like(session_id) {
+        Ok(())
+    } else {
+        Err("Claude session link must end with a CLI session UUID.".to_string())
+    }
 }
 
 fn validate_codex_thread_link(deep_link: &str) -> Result<(), String> {
@@ -71,7 +110,7 @@ fn valid_github_slug(value: &str) -> bool {
 
 fn validate_handoff_prompt(prompt: &str) -> Result<(), String> {
     if prompt.trim().is_empty() {
-        Err("Codex handoff prompt cannot be empty.".into())
+        Err("Handoff prompt cannot be empty.".into())
     } else {
         Ok(())
     }
@@ -90,7 +129,7 @@ fn validate_handoff_worktree_path(
     if path.is_absolute() && path.is_dir() {
         Ok(Some(path))
     } else {
-        Err("Codex handoff worktree path must be an existing absolute directory.".into())
+        Err("Handoff worktree path must be an existing absolute directory.".into())
     }
 }
 
@@ -101,6 +140,15 @@ fn codex_new_thread_link(prompt: &str, worktree_path: Option<&PathBuf>) -> Strin
     );
     if let Some(path) = worktree_path {
         link.push_str("&path=");
+        link.push_str(&percent_encode_query(&path.to_string_lossy()));
+    }
+    link
+}
+
+fn claude_new_session_link(prompt: &str, worktree_path: Option<&PathBuf>) -> String {
+    let mut link = format!("claude://code/new?q={}", percent_encode_query(prompt));
+    if let Some(path) = worktree_path {
+        link.push_str("&folder=");
         link.push_str(&percent_encode_query(&path.to_string_lossy()));
     }
     link
@@ -124,6 +172,10 @@ fn handoff_target(target_id: &str) -> Result<HandoffTarget, String> {
         "codex-app" => Ok(HandoffTarget {
             app_name: "Codex",
             display_name: "Codex App",
+        }),
+        "claude-code" => Ok(HandoffTarget {
+            app_name: "Claude",
+            display_name: "Claude",
         }),
         _ => Err("Only configured native handoff targets can be opened.".into()),
     }
@@ -159,7 +211,7 @@ fn is_uuid_like(value: &str) -> bool {
 fn open_external_url(url: &str) -> Result<(), String> {
     let status = platform_open_command(url)
         .status()
-        .map_err(|error| format!("Failed to open Codex link: {error}"))?;
+        .map_err(|error| format!("Failed to open external link: {error}"))?;
     if status.success() {
         Ok(())
     } else {
@@ -246,6 +298,30 @@ mod tests {
     }
 
     #[test]
+    fn validates_claude_resume_session_links() {
+        assert!(validate_agent_session_link(
+            "claude://resume?session=f24747aa-89d6-4c8a-82aa-5028998665f6"
+        )
+        .is_ok());
+        assert!(validate_agent_session_link(
+            "codex://threads/019e8f37-5cab-74f3-9933-93e3809396e5"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn rejects_unsupported_agent_session_links() {
+        assert!(validate_agent_session_link("https://example.com").is_err());
+        assert!(validate_claude_session_link("claude://resume?session=not-a-session").is_err());
+        // A desktop-owned id is a different address space and must not be treated as a CLI session.
+        assert!(validate_claude_session_link("claude://code/continue?session=local_abc").is_err());
+        assert!(validate_claude_session_link(
+            "claude://resume?session=f24747aa-89d6-4c8a-82aa-5028998665f6&source=shea"
+        )
+        .is_err());
+    }
+
+    #[test]
     fn validates_shea_github_source_links() {
         assert!(
             validate_github_source_url("https://github.com/Alive24/shea-symphony/issues/430")
@@ -279,6 +355,9 @@ mod tests {
         let codex = handoff_target("codex-app").unwrap();
         assert_eq!(codex.app_name, "Codex");
         assert_eq!(codex.display_name, "Codex App");
+        let claude = handoff_target("claude-code").unwrap();
+        assert_eq!(claude.app_name, "Claude");
+        assert_eq!(claude.display_name, "Claude");
         assert!(handoff_target("gemini-cli").is_err());
         assert!(handoff_target("https://example.com").is_err());
     }
@@ -301,6 +380,19 @@ mod tests {
         assert!(
             validate_handoff_worktree_path(Some("/definitely/missing/shea-worktree".into()))
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn builds_claude_new_session_link_with_prompt_and_folder() {
+        let path = PathBuf::from("/tmp/shea worktree");
+        assert_eq!(
+            claude_new_session_link("Review #407\nUse dev.", Some(&path)),
+            "claude://code/new?q=Review%20%23407%0AUse%20dev.&folder=%2Ftmp%2Fshea%20worktree"
+        );
+        assert_eq!(
+            claude_new_session_link("Review #407", None),
+            "claude://code/new?q=Review%20%23407"
         );
     }
 

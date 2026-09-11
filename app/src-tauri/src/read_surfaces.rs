@@ -106,6 +106,29 @@ pub async fn get_codex_transcript(
     .map_err(|error| format!("transcript read task failed: {error}"))?
 }
 
+/// Reads one local Claude Code CLI transcript for an issue. This is the peer of
+/// [`get_codex_transcript`]: the Claude Code lane backend records its session id in the
+/// session registry, and the CLI stores the matching JSONL under the Claude projects tree.
+#[tauri::command]
+pub async fn get_claude_transcript(
+    workspace: tauri::State<'_, WorkspaceManager>,
+    issue_ref: String,
+    session_id: Option<String>,
+    worktree_path: Option<String>,
+) -> Result<Value, String> {
+    let workspace_profile = workspace.current();
+    tauri::async_runtime::spawn_blocking(move || {
+        build_claude_transcript(
+            &issue_ref,
+            session_id.as_deref(),
+            worktree_path.as_deref(),
+            &workspace_profile,
+        )
+    })
+    .await
+    .map_err(|error| format!("transcript read task failed: {error}"))?
+}
+
 fn build_read_surface(
     name: &str,
     allow_project_fallback: bool,
@@ -217,6 +240,295 @@ fn build_codex_transcript(
         },
         "candidates": candidates,
     }))
+}
+
+fn build_claude_transcript(
+    issue_ref: &str,
+    session_id: Option<&str>,
+    worktree_path: Option<&str>,
+    workspace: &WorkspaceProfile,
+) -> Result<Value, String> {
+    let local_status = run_shea_read_for_workspace(
+        &read_surface_args("status", workspace).unwrap_or_default(),
+        workspace,
+    );
+    let snapshot = parse_json_output(&local_status.stdout);
+    let normalized_issue = normalize_issue_ref(issue_ref);
+    let candidates = claude_transcript_candidates(
+        &snapshot,
+        normalized_issue.as_deref(),
+        session_id,
+        worktree_path,
+    );
+
+    for candidate in &candidates {
+        let Some(path) = candidate.get("path").and_then(Value::as_str) else {
+            continue;
+        };
+        let path = PathBuf::from(path);
+        if !path.is_file() {
+            continue;
+        }
+        let metadata = fs::metadata(&path).ok();
+        let modified_at_ms = metadata
+            .as_ref()
+            .and_then(|metadata| metadata.modified().ok())
+            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+            .map(|duration| duration.as_millis() as u64);
+        let content = fs::read_to_string(&path)
+            .map_err(|error| format!("failed to read local Claude transcript: {error}"))?;
+        let summary = claude_conversation_summary(&content, &path);
+        return Ok(json!({
+            "status": "available",
+            "localOnly": true,
+            "path": path.display().to_string(),
+            "content": "",
+            "candidates": candidates,
+            "threadId": summary.get("threadId").cloned().unwrap_or(Value::Null),
+            "turnId": Value::Null,
+            "title": summary.get("title").cloned().unwrap_or(Value::Null),
+            "deepLink": summary.get("deepLink").cloned().unwrap_or(Value::Null),
+            "lastUserMessageAt": summary.get("lastUserMessageAt").cloned().unwrap_or(Value::Null),
+            "lastAssistantMessageAt": summary.get("lastAssistantMessageAt").cloned().unwrap_or(Value::Null),
+            "messageCounts": summary.get("messageCounts").cloned().unwrap_or_else(|| json!({})),
+            "metadata": {
+                "bytes": metadata.map(|metadata| metadata.len()).unwrap_or(0),
+                "modifiedAtMs": modified_at_ms,
+            },
+        }));
+    }
+
+    Ok(json!({
+        "status": "unavailable",
+        "localOnly": true,
+        "reason": if candidates.is_empty() {
+            "No local Claude transcript candidate was found from the session registry, the requested session id, or the Claude projects tree for this workspace."
+        } else {
+            "Local Claude transcript candidates were found, but no readable JSONL file exists at those paths."
+        },
+        "path": Value::Null,
+        "content": "",
+        "threadId": Value::Null,
+        "turnId": Value::Null,
+        "title": Value::Null,
+        "deepLink": Value::Null,
+        "lastUserMessageAt": Value::Null,
+        "lastAssistantMessageAt": Value::Null,
+        "messageCounts": {
+            "user": 0,
+            "assistant": 0,
+        },
+        "candidates": candidates,
+    }))
+}
+
+fn claude_transcript_candidates(
+    snapshot: &Value,
+    issue_ref: Option<&str>,
+    session_id: Option<&str>,
+    worktree_path: Option<&str>,
+) -> Vec<Value> {
+    let mut candidates = Vec::new();
+    let Some(root) = claude_projects_root() else {
+        return candidates;
+    };
+
+    if let Some(session_id) = session_id.filter(|value| is_claude_session_id(value)) {
+        for path in find_claude_session_jsonl(&root, session_id) {
+            candidates.push(json!({
+                "source": "runtime_session_id",
+                "path": path.display().to_string(),
+                "session": session_id,
+            }));
+        }
+    }
+
+    for session in snapshot
+        .get("sessions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        if !session
+            .get("backend")
+            .and_then(Value::as_str)
+            .is_some_and(is_claude_backend_label)
+        {
+            continue;
+        }
+        let session_issue = normalize_issue_ref(
+            session
+                .get("issue_identifier")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+        );
+        if issue_ref.is_some() && session_issue.as_deref() != issue_ref {
+            continue;
+        }
+        let Some(recorded) = session
+            .get("session_id")
+            .and_then(Value::as_str)
+            .filter(|value| is_claude_session_id(value))
+        else {
+            continue;
+        };
+        for path in find_claude_session_jsonl(&root, recorded) {
+            candidates.push(json!({
+                "source": "session_registry.session_id",
+                "path": path.display().to_string(),
+                "session": recorded,
+                "issue": session_issue,
+            }));
+        }
+    }
+
+    if let Some(worktree_path) = worktree_path.filter(|value| !value.trim().is_empty()) {
+        for path in claude_project_transcripts(&root, worktree_path, 10) {
+            candidates.push(json!({
+                "source": "claude_projects_workspace_fallback",
+                "path": path.display().to_string(),
+                "session": path.file_stem().and_then(|stem| stem.to_str()),
+            }));
+        }
+    }
+
+    dedupe_candidates(candidates)
+}
+
+/// The Claude Code CLI keys its project directories on the working directory with every
+/// character outside `[A-Za-z0-9-]` replaced by `-`, so `.claude` becomes `-claude`.
+fn claude_project_slug(worktree_path: &str) -> String {
+    worktree_path
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
+fn claude_projects_root() -> Option<PathBuf> {
+    std::env::var_os("CLAUDE_CONFIG_DIR")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".claude")))
+        .map(|path| path.join("projects"))
+}
+
+fn is_claude_backend_label(backend: &str) -> bool {
+    backend.to_ascii_lowercase().contains("claude")
+}
+
+fn is_claude_session_id(value: &str) -> bool {
+    value.len() == 36 && !uuid_like_parts(value).is_empty()
+}
+
+/// The transcript file is named after the session id, so an exact per-project probe is
+/// enough and no recursive scan of unrelated projects is needed.
+fn find_claude_session_jsonl(root: &Path, session_id: &str) -> Vec<PathBuf> {
+    let mut matches = Vec::new();
+    let Ok(entries) = fs::read_dir(root) else {
+        return matches;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path().join(format!("{session_id}.jsonl"));
+        if path.is_file() {
+            matches.push(path);
+        }
+    }
+    sort_by_newest(&mut matches);
+    matches
+}
+
+fn claude_project_transcripts(root: &Path, worktree_path: &str, limit: usize) -> Vec<PathBuf> {
+    let project = root.join(claude_project_slug(worktree_path));
+    let mut matches = Vec::new();
+    let Ok(entries) = fs::read_dir(&project) else {
+        return matches;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_file()
+            && path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with(".jsonl"))
+        {
+            matches.push(path);
+        }
+    }
+    sort_by_newest(&mut matches);
+    matches.truncate(limit);
+    matches
+}
+
+fn sort_by_newest(paths: &mut [PathBuf]) {
+    paths.sort_by_key(|path| {
+        fs::metadata(path)
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+            .map(|duration| std::cmp::Reverse(duration.as_millis()))
+    });
+}
+
+fn claude_conversation_summary(content: &str, path: &Path) -> Value {
+    let mut session_id: Option<String> = None;
+    let mut title: Option<String> = None;
+    let mut last_user_message_at = Value::Null;
+    let mut last_assistant_message_at = Value::Null;
+    let mut user_messages = 0_u64;
+    let mut assistant_messages = 0_u64;
+
+    for line in content
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
+        let Ok(record) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        capture_string(&mut session_id, record.get("sessionId"));
+        capture_string(&mut title, record.get("customTitle"));
+        let timestamp = record.get("timestamp").cloned().unwrap_or(Value::Null);
+        match record.get("type").and_then(Value::as_str) {
+            Some("user") => {
+                user_messages += 1;
+                if !timestamp.is_null() {
+                    last_user_message_at = timestamp;
+                }
+            }
+            Some("assistant") => {
+                assistant_messages += 1;
+                if !timestamp.is_null() {
+                    last_assistant_message_at = timestamp;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if session_id.is_none() {
+        session_id = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .filter(|stem| is_claude_session_id(stem))
+            .map(str::to_string);
+    }
+
+    json!({
+        "threadId": session_id.clone(),
+        "title": title,
+        "deepLink": session_id.map(|id| format!("claude://resume?session={id}")),
+        "lastUserMessageAt": last_user_message_at,
+        "lastAssistantMessageAt": last_assistant_message_at,
+        "messageCounts": {
+            "user": user_messages,
+            "assistant": assistant_messages,
+        },
+    })
 }
 
 fn codex_conversation_summary(content: &str, path: &Path) -> Value {
@@ -1791,6 +2103,86 @@ mod tests {
 
         assert_eq!(matches, vec![wanted]);
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn derives_claude_project_slug_from_worktree_path() {
+        assert_eq!(
+            claude_project_slug("/Volumes/Repos/voxim_workbench/.claude/worktrees/lane-1"),
+            "-Volumes-Repos-voxim-workbench--claude-worktrees-lane-1"
+        );
+    }
+
+    #[test]
+    fn finds_claude_transcript_by_session_id_under_projects_tree() {
+        let session = "f24747aa-89d6-4c8a-82aa-5028998665f6";
+        let root = std::env::temp_dir().join(format!("shea-claude-test-{}", unix_timestamp_ms()));
+        let project = root.join("-tmp-shea-workspace");
+        fs::create_dir_all(&project).unwrap();
+        let wanted = project.join(format!("{session}.jsonl"));
+        fs::write(&wanted, "{}\n").unwrap();
+        fs::write(
+            project.join("11111111-2222-3333-4444-555555555555.jsonl"),
+            "{}\n",
+        )
+        .unwrap();
+
+        assert_eq!(find_claude_session_jsonl(&root, session), vec![wanted]);
+        assert_eq!(
+            claude_project_transcripts(&root, "/tmp/shea/workspace", 10).len(),
+            2
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn summarizes_claude_transcript_into_a_resume_deep_link() {
+        let session = "f24747aa-89d6-4c8a-82aa-5028998665f6";
+        let content = format!(
+            concat!(
+                r#"{{"type":"user","sessionId":"{0}","timestamp":"2026-09-10T10:24:31.469Z"}}"#,
+                "\n",
+                r#"{{"type":"assistant","sessionId":"{0}","timestamp":"2026-09-10T10:24:39.100Z"}}"#,
+                "\n",
+                r#"{{"type":"custom-title","sessionId":"{0}","customTitle":"Review #6"}}"#,
+                "\n",
+                r#"not json"#,
+                "\n"
+            ),
+            session
+        );
+
+        let summary = claude_conversation_summary(
+            &content,
+            Path::new(&format!("/tmp/projects/-tmp-x/{session}.jsonl")),
+        );
+
+        assert_eq!(summary["threadId"], session);
+        assert_eq!(summary["title"], "Review #6");
+        assert_eq!(
+            summary["deepLink"],
+            format!("claude://resume?session={session}")
+        );
+        assert_eq!(summary["lastAssistantMessageAt"], "2026-09-10T10:24:39.100Z");
+        assert_eq!(summary["messageCounts"]["user"], 1);
+        assert_eq!(summary["messageCounts"]["assistant"], 1);
+    }
+
+    #[test]
+    fn claude_candidates_only_accept_claude_backed_sessions() {
+        let snapshot = json!({
+            "sessions": [
+                {"backend": "codex", "issue_identifier": "#6", "session_id": "f24747aa-89d6-4c8a-82aa-5028998665f6"},
+                {"backend": "claude-code", "issue_identifier": "#7", "session_id": "f24747aa-89d6-4c8a-82aa-5028998665f6"}
+            ]
+        });
+
+        // No transcript exists on disk for either row, so the guard is what is under test here.
+        assert!(claude_transcript_candidates(&snapshot, Some("#6"), None, None).is_empty());
+        assert!(is_claude_backend_label("claude-code"));
+        assert!(!is_claude_backend_label("codex"));
+        assert!(is_claude_session_id("f24747aa-89d6-4c8a-82aa-5028998665f6"));
+        assert!(!is_claude_session_id("local_abc"));
     }
 
     #[test]

@@ -153,7 +153,7 @@ export function parseCodexTranscriptJsonl(text: unknown): TranscriptParseResult 
 export function transcriptUnavailable(reason: string) {
   return {
     status: 'unavailable',
-    reason: reason || 'No local Codex transcript candidate was found.',
+    reason: reason || 'No local agent transcript candidate was found.',
     localOnly: true,
     candidates: [],
     content: '',

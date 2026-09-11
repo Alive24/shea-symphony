@@ -209,6 +209,27 @@ export async function getCodexTranscript(issueRef: string, sessionId: string | n
   return invoke<Record<string, unknown>>('get_codex_transcript', { issueRef, sessionId });
 }
 
+export async function getClaudeTranscript(
+  issueRef: string,
+  sessionId: string | null = null,
+  worktreePath: string | null = null
+): Promise<Record<string, unknown> | null> {
+  if (!isTauriRuntime()) return null;
+  const { invoke } = await import('@tauri-apps/api/core');
+  return invoke<Record<string, unknown>>('get_claude_transcript', { issueRef, sessionId, worktreePath });
+}
+
+// Opens a codex:// or claude:// session link. The backend of the recorded session decides
+// which scheme is produced; neither harness is a fallback for the other.
+export async function openAgentSession(deepLink: string): Promise<void> {
+  if (!isTauriRuntime()) {
+    window.location.href = deepLink;
+    return;
+  }
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('open_agent_session', { deepLink });
+}
+
 export async function openCodexThread(deepLink: string): Promise<void> {
   if (!isTauriRuntime()) {
     window.location.href = deepLink;
@@ -233,6 +254,15 @@ export async function openCodexHandoff(prompt: string, worktreePath: string | nu
   }
   const { invoke } = await import('@tauri-apps/api/core');
   await invoke('open_codex_handoff', { prompt, worktreePath });
+}
+
+export async function openClaudeHandoff(prompt: string, worktreePath: string | null = null): Promise<void> {
+  if (!isTauriRuntime()) {
+    await navigator.clipboard.writeText(prompt);
+    throw new Error('Claude Code handoff is only available in the desktop shell.');
+  }
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('open_claude_handoff', { prompt, worktreePath });
 }
 
 export async function openGitHubSource(url: string): Promise<void> {

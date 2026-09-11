@@ -65,6 +65,30 @@ empty findings, partial text, or missing output.
 See the official [Claude Code CLI reference](https://code.claude.com/docs/en/cli-usage)
 for the underlying flags and session contract.
 
+## Operator session surface
+
+The backend records the Claude Code session id in the session registry as both
+`thread` and `session_name`, with `session_source: claude-code-stream-json`, so
+`status show --json` exposes it as a session row with `backend: claude-code` and
+`session_id: <uuid>`. The CLI writes the matching transcript to
+`$CLAUDE_CONFIG_DIR/projects/<slug>/<session-id>.jsonl` (`~/.claude` when the
+variable is unset), where `<slug>` is the workspace path with every character
+outside `[A-Za-z0-9-]` replaced by `-`.
+
+The App reads that file through `get_claude_transcript` and offers **Open in
+Claude**, the peer of **Open in Codex**. The link is
+`claude://resume?session=<uuid>`, which asks Claude Desktop to import the
+existing CLI session. `claude://code/continue?session=` is a different address
+space — it takes a desktop-owned `local_*` id — and cannot address a session
+recorded by this backend. `open_agent_session` validates the scheme and the
+UUID before handing the link to the system opener; the Issue's recorded backend
+selects the scheme, and neither harness is a fallback for the other.
+
+The operator handoff target `claude-code` opens
+`claude://code/new?q=<prompt>&folder=<worktree>` for a new session, matching the
+Codex `codex://threads/new` handoff. A handoff carries context only; it is not
+lane authorization.
+
 ## Deterministic fixture
 
 ```bash

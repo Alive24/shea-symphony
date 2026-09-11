@@ -1458,16 +1458,16 @@ test('Codex transcript parser marks malformed still-growing JSONL as partial', (
   assert.equal(parsed.events.some((event) => event.title === 'Malformed JSONL line'), true);
 });
 
-test('Codex conversation surface uses a deep link summary instead of transcript rendering', () => {
+test('agent conversation surface uses a deep link summary instead of transcript rendering', () => {
   const laneIssueView = readFileSync(new URL('../src/lib/LaneIssueView.svelte', import.meta.url), 'utf8');
   const tauriAutoloop = readFileSync(new URL('../src/lib/tauriAutoloop.ts', import.meta.url), 'utf8');
 
-  assert.match(laneIssueView, /Open in Codex/);
+  assert.match(laneIssueView, /Open in \{selectedAgentLabel\}/);
   assert.match(laneIssueView, /transcriptDeepLink/);
   assert.match(laneIssueView, /function codexTranscriptLink/);
   assert.match(laneIssueView, /lastUserMessageAt/);
   assert.match(laneIssueView, /lastAssistantMessageAt/);
-  assert.match(laneIssueView, /openCodexThread\(deepLink\)/);
+  assert.match(laneIssueView, /openAgentSession\(deepLink\)/);
   assert.match(laneIssueView, /openSourceLink\(event\.url\)/);
   assert.match(tauriAutoloop, /open_codex_thread/);
   assert.match(tauriAutoloop, /open_github_source/);
@@ -1475,6 +1475,24 @@ test('Codex conversation surface uses a deep link summary instead of transcript 
   assert.doesNotMatch(laneIssueView, /transcriptPageEvents/);
   assert.doesNotMatch(laneIssueView, /window\.open\(transcriptDeepLink/);
   assert.doesNotMatch(laneIssueView, /target="_blank" rel="noreferrer">Source/);
+});
+
+test('Codex and Claude Code are peer session surfaces in the operator app', () => {
+  const laneIssueView = readFileSync(new URL('../src/lib/LaneIssueView.svelte', import.meta.url), 'utf8');
+  const tauriAutoloop = readFileSync(new URL('../src/lib/tauriAutoloop.ts', import.meta.url), 'utf8');
+  const operatorDesk = readFileSync(new URL('../src/OperatorDesk.svelte', import.meta.url), 'utf8');
+
+  // The recorded session's own backend selects the scheme, so neither harness is a fallback.
+  assert.match(laneIssueView, /function agentBackendForIssue/);
+  assert.match(laneIssueView, /claude:\/\/resume\?session=/);
+  assert.match(laneIssueView, /codex:\/\/threads\//);
+  assert.match(laneIssueView, /getClaudeTranscript\(/);
+  assert.match(laneIssueView, /getCodexTranscript\(/);
+  assert.match(tauriAutoloop, /get_claude_transcript/);
+  assert.match(tauriAutoloop, /open_agent_session/);
+  assert.match(tauriAutoloop, /open_claude_handoff/);
+  assert.match(operatorDesk, /openClaudeHandoff\(prompt, worktreePath\)/);
+  assert.match(operatorDesk, /openCodexHandoff\(prompt, worktreePath\)/);
 });
 
 test('Tauri read and timeline requests use active workspace context', () => {

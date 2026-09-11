@@ -21,6 +21,7 @@
     laneWorkerFromAutoloop,
     laneWorkersFromAutoloopLines,
     mergeLaneSnapshot,
+    openClaudeHandoff,
     openCodexHandoff,
     operatorRunLogLines,
     subscribeAutoloopEvents,
@@ -210,20 +211,27 @@
     return candidates.find((entry) => normalizeIssueRef(entry?.issue ?? entry?.issueRef ?? entry?.id) === issueRef)?.path ?? null;
   }
 
+  // Codex and Claude Code both take a native new-session deep link. A target without one
+  // still falls back to copying the same prompt; the prompt itself is harness-neutral.
   async function openHandoff(issue) {
-    if (defaultHandoffTarget !== 'codex-app') {
+    if (defaultHandoffTarget !== 'codex-app' && defaultHandoffTarget !== 'claude-code') {
       await copyHandoffPrompt(issue);
       return;
     }
+    const label = handoffLabel(defaultHandoffTarget);
     try {
       const prompt = await handoffPromptForIssue(issue);
       const worktreePath = issueWorktreePath(issue);
-      await openCodexHandoff(prompt, worktreePath);
+      if (defaultHandoffTarget === 'claude-code') {
+        await openClaudeHandoff(prompt, worktreePath);
+      } else {
+        await openCodexHandoff(prompt, worktreePath);
+      }
       handoffStatus = { ...handoffStatus, [issue.id]: '' };
     } catch (error) {
       handoffStatus = {
         ...handoffStatus,
-        [issue.id]: handoffErrorMessage(error, 'Unable to open Codex handoff.')
+        [issue.id]: handoffErrorMessage(error, `Unable to open the ${label} handoff.`)
       };
     }
   }

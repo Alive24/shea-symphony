@@ -5,9 +5,10 @@
   import { operatorOverviewStore } from "./operatorOverviewStore.ts";
   import { localArtifactRefreshEventDetail } from "./localArtifactRefresh.ts";
   import {
+    getClaudeTranscript,
     getCodexTranscript,
     getIssueTimeline,
-    openCodexThread,
+    openAgentSession,
     openGitHubSource,
   } from "./tauriAutoloop.ts";
   import {
@@ -110,7 +111,12 @@
         laneEventEvidence(selectedIssue, view, remoteLifecycleEvents),
       )
     : null;
-  $: transcriptDeepLink = codexTranscriptLink(transcriptResponse);
+  $: selectedAgentBackend = agentBackendForIssue(selectedIssue);
+  $: selectedAgentLabel = agentLabelForBackend(selectedAgentBackend);
+  $: transcriptDeepLink = agentTranscriptLink(
+    transcriptResponse,
+    selectedAgentBackend,
+  );
   $: maybeLoadIssueTimeline(selectedIssue);
   $: maybeLoadTranscript(selectedIssue);
   $: laneColumns = laneOrder.map((lane) => {
@@ -574,7 +580,12 @@
   }
 
   function runtimeDetailForWorker(worker: any) {
-    if (worker.backend === "Codex app-server") {
+    if (
+      worker.backend === "Codex app-server" ||
+      String(worker.backend ?? "")
+        .toLowerCase()
+        .includes("claude")
+    ) {
       const session =
         worker.sessionId ??
         (worker.session === "session pending" ? null : worker.session);
@@ -714,17 +725,25 @@
   }
 
   async function loadTranscript(issue: any) {
+    const backend = agentBackendForIssue(issue);
+    const label = agentLabelForBackend(backend);
     transcriptLoading = true;
     transcriptError = "";
     transcriptResponse = transcriptUnavailable(
-      "Loading local Codex transcript.",
+      `Loading the local ${label} transcript.`,
     );
     try {
       transcriptResponse = transcriptFixture
         ? transcriptFixture
-        : ((await getCodexTranscript(issue.id, sessionIdForIssue(issue))) ??
+        : ((backend === "claude-code"
+            ? await getClaudeTranscript(
+                issue.id,
+                sessionIdForIssue(issue),
+                issue?.worktree?.path ?? null,
+              )
+            : await getCodexTranscript(issue.id, sessionIdForIssue(issue))) ??
           transcriptUnavailable(
-            "Codex transcript reads are only available in the desktop shell.",
+            `${label} transcript reads are only available in the desktop shell.`,
           ));
     } catch (error) {
       transcriptError = error instanceof Error ? error.message : String(error);
@@ -740,12 +759,15 @@
     maybeLoadTranscript(selectedIssue);
   }
 
-  async function openCodexTranscript() {
-    const deepLink = codexTranscriptLink(transcriptResponse);
+  async function openAgentTranscript() {
+    const deepLink = agentTranscriptLink(
+      transcriptResponse,
+      selectedAgentBackend,
+    );
     if (!deepLink) return;
     transcriptError = "";
     try {
-      await openCodexThread(deepLink);
+      await openAgentSession(deepLink);
     } catch (error) {
       transcriptError = error instanceof Error ? error.message : String(error);
     }
@@ -775,6 +797,34 @@
       response?.deepLink ??
       (response?.threadId ? `codex://threads/${response.threadId}` : null)
     );
+  }
+
+  function claudeTranscriptLink(response: any) {
+    return (
+      response?.deepLink ??
+      (response?.threadId
+        ? `claude://resume?session=${response.threadId}`
+        : null)
+    );
+  }
+
+  // The recorded session's own backend decides the scheme. Codex and Claude Code are peers;
+  // one is never rendered as the other's fallback.
+  function agentBackendForIssue(issue: any) {
+    const backend = String(
+      issue?.worker?.backend ?? issue?.backend ?? "",
+    ).toLowerCase();
+    return backend.includes("claude") ? "claude-code" : "codex";
+  }
+
+  function agentLabelForBackend(backend: string) {
+    return backend === "claude-code" ? "Claude" : "Codex";
+  }
+
+  function agentTranscriptLink(response: any, backend: string) {
+    return backend === "claude-code"
+      ? claudeTranscriptLink(response)
+      : codexTranscriptLink(response);
   }
 
   function laneKeyForIssue(issue: any) {
@@ -1009,14 +1059,14 @@
 
     <section
       class="transcript-panel"
-      aria-label={`${selectedIssue.id} Codex conversation`}
+      aria-label={`${selectedIssue.id} ${selectedAgentLabel} conversation`}
     >
       <div class="transcript-panel-head">
         <div>
-          <span class="mini-label">Codex conversation</span>
+          <span class="mini-label">{selectedAgentLabel} conversation</span>
           <h3>
             {transcriptResponse?.status === "available"
-              ? "Open in Codex App"
+              ? `Open in ${selectedAgentLabel}`
               : "Unavailable locally"}
           </h3>
         </div>
@@ -1039,10 +1089,10 @@
         </div>
       {:else if transcriptResponse?.status !== "available"}
         <div class="inline-empty compact-empty">
-          <strong>No local Codex conversation link</strong>
+          <strong>No local {selectedAgentLabel} conversation link</strong>
           <p>
             {transcriptResponse?.reason ??
-              "No local Codex transcript candidate was found."}
+              `No local ${selectedAgentLabel} transcript candidate was found.`}
           </p>
         </div>
       {:else}
@@ -1050,14 +1100,14 @@
           <button
             class="btn btn-primary"
             type="button"
-            on:click={openCodexTranscript}
-            disabled={!codexTranscriptLink(transcriptResponse)}
+            on:click={openAgentTranscript}
+            disabled={!transcriptDeepLink}
           >
-            Open in Codex
+            Open in {selectedAgentLabel}
           </button>
           <div
             class="codex-link-times"
-            aria-label="Codex conversation message times"
+            aria-label={`${selectedAgentLabel} conversation message times`}
           >
             <div>
               <span>Last sent</span>

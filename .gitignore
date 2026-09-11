@@ -3,6 +3,7 @@
 /tmp/
 project_items.json
 .codex/config.toml
+.mcp.json
 .shea/*.local.json
 .shea/runtime-profile.json
 .shea/local/
@@ -27,3 +28,8 @@ storybook-static
 .shea/**/*.local.*
 
 .antigravitycli/
+
+# Claude Code machine-local execution data; `.claude/skills/` stays tracked
+.claude/.cc-writes/
+.claude/worktrees/
+.claude/settings.local.json

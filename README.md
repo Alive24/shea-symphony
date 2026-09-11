@@ -41,6 +41,17 @@ and lifecycle evidence.
 - Use the [Shea Symphony App](app/README.md) as the normal operator surface.
   The Legacy CLI is an internal compatibility adapter used by the App, Skills,
   and bounded recovery paths; it is not the normal user interface.
+- Start a Skill from Codex or from Claude Code. `.agents/skills/` holds the one
+  authoritative body of each Skill; each harness only adds discovery metadata,
+  `agents/openai.yaml` for Codex and a thin delegating entry point under
+  `.claude/skills/` for Claude Code. The lane contract, permissions and evidence
+  are identical from either side.
+- OpenWiki runs on the installed `openwiki` executable; no copy is vendored or
+  pinned here. Its Skill is tracked for both harnesses, but the MCP server
+  registration is machine-local like `.codex/config.toml` already was, so each
+  clone runs `openwiki integrations install codex` and
+  `openwiki integrations install claude` once. That server makes no model calls,
+  so a refresh uses the inference of whichever session runs it.
 
 ## Documentation
 

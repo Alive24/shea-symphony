@@ -16,6 +16,12 @@ const CANONICAL_SKILLS: &[&str] = &[
     "shea-agent-review",
 ];
 
+/// Skills under `.agents/skills/` that a third-party installer owns rather than
+/// this repository. They are deliberately outside the first-party inventory and
+/// must carry their installer's receipt, which is what keeps this exemption from
+/// becoming a way to smuggle in an unmanaged Skill.
+const INSTALLER_MANAGED_SKILLS: &[(&str, &str)] = &[("openwiki", ".openwiki-install.json")];
+
 fn repo_path(path: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(path)
 }
@@ -54,11 +60,16 @@ fn relative_markdown_links(source: &str) -> Vec<&str> {
 #[test]
 fn agents_skills_is_the_only_complete_first_party_inventory() {
     let root = repo_path(".agents/skills");
+    let installer_managed = INSTALLER_MANAGED_SKILLS
+        .iter()
+        .map(|(name, _)| (*name).to_string())
+        .collect::<BTreeSet<_>>();
     let actual = fs::read_dir(&root)
         .unwrap()
         .filter_map(Result::ok)
         .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
         .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| !installer_managed.contains(name))
         .collect::<BTreeSet<_>>();
     let expected = CANONICAL_SKILLS
         .iter()
@@ -66,6 +77,15 @@ fn agents_skills_is_the_only_complete_first_party_inventory() {
         .collect::<BTreeSet<_>>();
 
     assert_eq!(actual, expected);
+    for (name, receipt) in INSTALLER_MANAGED_SKILLS {
+        let skill = root.join(name);
+        if skill.is_dir() {
+            assert!(
+                skill.join(receipt).is_file(),
+                "{name} claims installer ownership without {receipt}"
+            );
+        }
+    }
     assert!(!repo_path("skills/shea-symphony").exists());
     assert!(!repo_path("scripts/install-shea-symphony-skills.js").exists());
     assert!(!repo_path(".shea-example").exists());

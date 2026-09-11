@@ -692,7 +692,15 @@ fn append_entry_anomalies(
     ]
     .join("\n")
     .to_ascii_lowercase();
-    if contains_backend_attention(&error_text) {
+    // Completed review prose can discuss authorization or configuration defects.
+    // It is not a backend failure log; prefer the structured backend outcome.
+    let backend_unavailable = matches!(
+        entry.review_outcome,
+        Some(ReviewOutcome::BackendUnavailable)
+    );
+    let unfinished_backend_warning = !matches!(entry.job_state, Some(ReviewJobState::Completed))
+        && contains_backend_attention(&error_text);
+    if backend_unavailable || unfinished_backend_warning {
         anomalies.push(anomaly(
             "review_backend_attention",
             "warning",
@@ -1114,6 +1122,55 @@ mod tests {
             .anomalies
             .iter()
             .any(|anomaly| anomaly.code == "project_claim_without_active_job"));
+    }
+
+    #[test]
+    fn completed_review_prose_is_not_backend_failure_evidence() {
+        for (state, outcome, summary, expected) in [
+            (
+                ReviewJobState::Completed,
+                ReviewOutcome::NeedsRework,
+                "Authorization for the configuration change is not found in the Issue contract.",
+                false,
+            ),
+            (
+                ReviewJobState::Completed,
+                ReviewOutcome::BackendUnavailable,
+                "Reviewer could not start.",
+                true,
+            ),
+            (
+                ReviewJobState::Failed,
+                ReviewOutcome::NeedsHumanInput,
+                "spawn error: missing binary",
+                true,
+            ),
+        ] {
+            let mut record = ledger("#5", "review-status-regression", state);
+            record.record.decision_outcome = outcome;
+            record.record.summary = Some(summary.into());
+            let payload = compose_review_status(
+                &config(),
+                &[issue("#5", "Agent Review")],
+                vec![record],
+                &[],
+                None,
+                &ReviewStatusOptions {
+                    issue_filter: Some("#5".into()),
+                    recent_limit: 5,
+                    verbose: false,
+                },
+                5_000,
+            );
+            assert_eq!(
+                payload
+                    .anomalies
+                    .iter()
+                    .any(|item| item.code == "review_backend_attention"),
+                expected,
+                "{summary}",
+            );
+        }
     }
 
     #[test]

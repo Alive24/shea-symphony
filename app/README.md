@@ -43,8 +43,11 @@ npm run bundle:legacy
 The staging script builds `shea-symphony-legacy` for the active Rust target,
 checks its machine-readable role and source revision, and places it under
 `src-tauri/binaries/` using Tauri's sidecar naming convention. The command
-builds the supported local Tauri App bundle (without invoking an installer or
-signing flow). It fails clearly when the staged artifact is missing.
+builds the supported local Tauri App bundle without an installer, Developer ID
+signing or notarization. Local macOS bundles receive a verified ad-hoc resource
+seal; a linker-signed executable alone is not a sealed App bundle. Existing
+valid signatures are retained. No quarantine or Gatekeeper settings are changed.
+The command fails clearly when staging or bundle verification fails.
 
 ## Legacy Workspace And Review Integration
 

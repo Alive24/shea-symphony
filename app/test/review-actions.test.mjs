@@ -47,3 +47,17 @@ test('an incomplete Complete receipt is not accepted as publication evidence', (
   assert.equal(result.label, 'Needs diagnosis');
   assert.equal(result.canStart, false);
 });
+
+
+import { mergeIssueDetail } from '../src/lib/viewModel/issueDetail.ts';
+
+test('live Review and Rework states survive a completed local worktree', () => {
+  const local = {id:'#5', state:'Done', worktree:{path:'/preserved/issue-5', head:'old-head'}};
+  for (const state of ['Agent Review', 'Rework', 'Need Human Input']) {
+    const result = mergeIssueDetail({id:'#5', state, worktree:{head:'current-head'}}, local);
+    assert.equal(result.state, state);
+    assert.equal(result.worktree.path, '/preserved/issue-5');
+    assert.equal(result.worktree.head, 'current-head');
+  }
+  assert.equal(mergeIssueDetail(undefined, local), local);
+});

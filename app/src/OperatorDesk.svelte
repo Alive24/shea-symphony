@@ -3,8 +3,6 @@
   import {
     HANDOFF_TARGETS,
     HANDOFF_TARGET_CHANGE_EVENT,
-    autoloopControlStore,
-    autoloopStateStore,
     getDefaultHandoffTarget,
     refreshStatusStore
   } from './lib/uiState.ts';
@@ -54,17 +52,6 @@
   $: autoloopLogLines = autoloopState?.recentLines ?? [];
   $: autoloopStdoutLines = latestAutoloopStdout(autoloopState, autoloopLogLines);
   $: latestAutoloopLine = autoloopStdoutLines.slice(-1)[0]?.line ?? (autoloopState.running ? 'Loop is running' : 'No recent autoloop result');
-  $: autoloopControlStore.set({
-    tauriAvailable,
-    busy: autoloopBusy,
-    running: autoloopState.running,
-    mode: autoloopState.mode,
-    workflowPath: autoloopState.workflowPath,
-    targetRoot: '',
-    latestLine: latestAutoloopLine,
-    laneMaxSummary: laneMaxSummary(autoloopLanes)
-  });
-  $: autoloopStateStore.set(autoloopState);
   $: operatorSurfaceRefreshing = $refreshStatusStore.running;
   $: issueTitleById = buildIssueTitleMap(queueIssues);
   $: liveWorkersByLane = ['main', 'review', 'merge'].reduce((lanes, laneKey) => {
@@ -281,16 +268,6 @@
     }, 300);
     return () => {
       window.removeEventListener(HANDOFF_TARGET_CHANGE_EVENT, handoffTargetListener);
-      autoloopControlStore.set({
-        tauriAvailable: false,
-        busy: false,
-        running: false,
-        mode: 'dry-run',
-        workflowPath: '.shea/workflows/shea-symphony.md',
-        targetRoot: '',
-        latestLine: 'No recent autoloop result',
-        laneMaxSummary: ''
-      });
       window.clearInterval(handoffRefresh);
       if (autoloopRefreshTimer) window.clearTimeout(autoloopRefreshTimer);
       unlistenAutoloop?.();

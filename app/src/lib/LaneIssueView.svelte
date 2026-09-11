@@ -1,5 +1,6 @@
 <script lang="ts">
   import ReviewControls from "./ReviewControls.svelte";
+  import { mergeIssueDetail } from "./viewModel/issueDetail.ts";
   import { autoloopStateStore, workspaceProfileStore, REFRESH_REQUEST_EVENT } from "./uiState.ts";
   import { operatorOverviewStore } from "./operatorOverviewStore.ts";
   import { localArtifactRefreshEventDetail } from "./localArtifactRefresh.ts";
@@ -390,8 +391,10 @@
   ) {
     const normalized = normalizeIssueRef(issueRef);
     return (
-      completedIssues.find((issue) => issue.id === normalized) ??
-      rows.find((issue) => issue.id === normalized) ??
+      mergeIssueDetail(
+        rows.find((issue) => issue.id === normalized),
+        completedIssues.find((issue) => issue.id === normalized),
+      ) ??
       (model?.issueIndex ?? []).find(
         (issue: any) =>
           normalizeIssueRef(issue.id ?? issue.identifier) === normalized,

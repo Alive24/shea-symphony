@@ -831,8 +831,13 @@ esac
             let mut backend = ClaudeCodeReviewBackend::from_config(&config.review);
             backend.command = command.clone();
             let mut request = request(&temp, &workspace, identifier);
-            request.prompt = prompt.into();
+            request.prompt = format!(
+                "{prompt} Read tracked.txt in the current working directory; it is the entire selected fixture. No GitHub, tracker, PR or other files are required for this standalone transport test. Return the native JSON schema. A pass must have no confirmed or needs_context findings; rework requires a confirmed finding; needs_context requires a needs_context finding."
+            );
             let job = run(&backend, request);
+            // Live provider failures must remain inspectable after an assertion unwinds.
+            let evidence_root = temp.keep();
+            eprintln!("Claude live fixture {identifier}: evidence={}", evidence_root.display());
 
             assert_eq!(job.state, ReviewJobState::Completed, "{job:?}");
             let report = job.report.unwrap();

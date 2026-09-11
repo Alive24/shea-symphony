@@ -631,6 +631,48 @@ esac
     }
 
     #[test]
+    fn mixed_findings_survive_and_conflicting_pass_retains_raw_evidence() {
+        let temp = tempfile::tempdir().unwrap();
+        let workspace = workspace(&temp);
+        for (mode, state) in [
+            ("mixed", ReviewJobState::Completed),
+            ("conflicting-pass", ReviewJobState::Failed),
+        ] {
+            let job = run(
+                &checked_in_protocol_backend(mode),
+                request(&temp, &workspace, "#515"),
+            );
+            assert_eq!(job.state, state, "{job:?}");
+            let artifact: serde_json::Value =
+                serde_json::from_slice(&fs::read(job.artifact_path.as_ref().unwrap()).unwrap())
+                    .unwrap();
+            let raw: serde_json::Value =
+                serde_json::from_str(artifact["structured_output"].as_str().unwrap()).unwrap();
+            assert_eq!(raw["findings"].as_array().unwrap().len(), 2);
+            assert!(!artifact["protocol_artifacts"]
+                .as_array()
+                .unwrap()
+                .is_empty());
+            if mode == "mixed" {
+                assert_eq!(job.report.as_ref().unwrap().findings.len(), 2);
+                assert_eq!(
+                    super::super::review_gate_decision(&job).outcome,
+                    super::super::ReviewOutcome::NeedsRework
+                );
+                let evidence = super::super::render_review_workpad(&issue("#515"), &job);
+                assert!(evidence.contains("tracker evidence is incomplete"));
+            } else {
+                assert!(job.report.is_none());
+                assert!(job
+                    .error
+                    .as_ref()
+                    .unwrap()
+                    .contains("conflicts with blocking findings"));
+            }
+        }
+    }
+
+    #[test]
     fn new_jobs_are_fresh_and_parallel_artifacts_and_sessions_are_isolated() {
         let temp = tempfile::tempdir().unwrap();
         let workspace = workspace(&temp);

@@ -6,6 +6,8 @@ IFS= read -r _input
 
 case "${SHEA_CLAUDE_REVIEW_FIXTURE:-pass}" in
   finding) fixture=finding.jsonl ;;
+  mixed) fixture=mixed.jsonl ;;
+  conflicting-pass) fixture=conflicting-pass.jsonl ;;
   *) fixture=pass.jsonl ;;
 esac
 

@@ -589,3 +589,26 @@ fn review_workspace_rejects_unverified_external_tracker_path() {
 
     assert_eq!(strong_canonical_review_workspace(&report), None);
 }
+
+#[test]
+fn automatic_review_prompt_delivers_snapshot_as_data_without_template_execution() {
+    let workflow = WorkflowDefinition::parse(
+        "/tmp/WORKFLOW.md",
+        "---\ntracker:\n  kind: memory\n---\nReview {{ issue.identifier }}",
+    )
+    .unwrap();
+    let mut issue = review_issue_with_ref("#282", "Headless review");
+    issue.description =
+        Some("Contract {{ issue.title }}\n<!-- shea-symphony-workpad -->\nMain evidence".into());
+    issue.linked_pull_requests = vec![shea_symphony::model::LinkedPullRequest {
+        head_sha: Some("abc123".into()),
+        ..Default::default()
+    }];
+    let prompt =
+        render_automatic_review_prompt_for_backend(&workflow, &issue, "claude-code").unwrap();
+    let snapshot_start = prompt.rfind("\n{\n").unwrap();
+    let snapshot: shea_symphony::model::TrackerIssue =
+        serde_json::from_str(&prompt[snapshot_start..]).unwrap();
+    assert_eq!(snapshot, issue);
+    assert!(snapshot.description.unwrap().contains("{{ issue.title }}"));
+}

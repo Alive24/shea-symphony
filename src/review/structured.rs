@@ -180,11 +180,6 @@ pub(super) fn structured_report(
                 "{display_name} needs_context classification has no Needs Context finding"
             ));
         }
-        StructuredTerminal::NeedsContext if has_confirmed => {
-            return Err(format!(
-                "{display_name} needs_context classification conflicts with a confirmed finding"
-            ));
-        }
         _ => {}
     }
 

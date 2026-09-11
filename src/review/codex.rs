@@ -528,12 +528,6 @@ fn structured_report(
                 "Codex Review needs_context classification has no Needs Context finding".into(),
             )
         }
-        StructuredTerminal::NeedsContext if has_confirmed => {
-            return Err(
-                "Codex Review needs_context classification conflicts with a confirmed finding"
-                    .into(),
-            )
-        }
         _ => {}
     }
 
@@ -991,6 +985,14 @@ esac
         assert_eq!(artifact["attempt_count"], 2);
         assert_eq!(artifact["resumed_same_job"], true);
         assert_eq!(artifact["protocol_artifacts"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn needs_context_can_preserve_confirmed_findings() {
+        let raw = r#"{"summary": "A confirmed defect remains; tracker evidence is incomplete.", "terminal_classification": "needs_context", "findings": [{"class": "confirmed", "severity": "high", "title": "Wrong result", "body": "Wrong result", "file": null, "line": null, "evidence": "Fixture evidence"}, {"class": "needs_context", "severity": "note", "title": "Missing tracker field", "body": "Missing tracker field", "file": null, "line": null, "evidence": "Fixture evidence"}]}"#;
+        let report = structured_report(raw, None, String::new(), Some("0".into())).unwrap();
+        assert_eq!(report.findings.len(), 2);
+        assert!(report.blocks_progress());
     }
 
     #[test]

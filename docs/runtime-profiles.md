@@ -95,7 +95,11 @@ Successful profile identity, worktree, matched sources, and observed tool
 versions are safe to record in Main runtime/workpad evidence. Environment
 values and probe arguments are not included in that evidence.
 
-The first slice does not apply repository runtime profiles to Review or Merge.
+The desktop App also applies the validated profile overlay to its Legacy CLI
+and GitHub read subprocesses. Before a write command it checks source drift and
+tool versions in the selected management checkout. Main still repeats readiness
+in the exact Issue worktree. Review and Merge launched by the App inherit that
+environment; direct CLI callers remain responsible for their launch environment.
 Doctor may report a profile problem, but routes discovery, environment
 selection, and confirmed profile writes back to `setup-shea`.
 

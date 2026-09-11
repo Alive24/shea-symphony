@@ -6,6 +6,7 @@ mod external_links;
 mod github;
 mod handoff_prompts;
 mod read_surfaces;
+mod review_actions;
 mod runtime;
 mod target_context;
 mod temporal_health;
@@ -24,6 +25,7 @@ fn main() {
 
     tauri::Builder::default()
         .manage(LoopManager::default())
+        .manage(review_actions::ReviewActionManager::default())
         .manage(WorkspaceManager::new(
             engine_root,
             workspace_profile,
@@ -31,6 +33,11 @@ fn main() {
         ))
         .invoke_handler(tauri::generate_handler![
             workspace::get_workspace_profile,
+            review_actions::get_app_readiness,
+            review_actions::get_issue_review_status,
+            review_actions::get_review_action_state,
+            review_actions::prepare_review_action,
+            review_actions::execute_review_action,
             workspace::set_active_workspace,
             autoloop::start_autoloop,
             autoloop::stop_autoloop,

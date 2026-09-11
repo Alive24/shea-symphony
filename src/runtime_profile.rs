@@ -209,7 +209,8 @@ pub fn resolve_runtime_readiness(
         if !source_path.is_file() {
             return Err(RuntimeProfileError::MissingSource(source.path.clone()));
         }
-        let actual = git_blob_fingerprint(workspace, &source.path)?;
+        let actual =
+            git_blob_fingerprint_in_environment(workspace, &source.path, &profile.environment)?;
         if actual != source.git_blob {
             return Err(RuntimeProfileError::Drift {
                 path: source.path.clone(),
@@ -538,8 +539,18 @@ fn safe_version_probe_args(arguments: &[String]) -> bool {
     )
 }
 
+#[cfg(test)]
 fn git_blob_fingerprint(workspace: &Path, source: &Path) -> Result<String, RuntimeProfileError> {
+    git_blob_fingerprint_in_environment(workspace, source, &BTreeMap::new())
+}
+
+fn git_blob_fingerprint_in_environment(
+    workspace: &Path,
+    source: &Path,
+    environment: &BTreeMap<String, String>,
+) -> Result<String, RuntimeProfileError> {
     let output = Command::new("git")
+        .envs(environment)
         .arg("-C")
         .arg(workspace)
         .args(["hash-object", "--"])

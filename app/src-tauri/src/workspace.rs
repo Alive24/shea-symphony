@@ -82,17 +82,22 @@ impl WorkspaceManager {
     }
 
     pub fn current(&self) -> WorkspaceProfile {
-        self.inner
+        let mut profile = self
+            .inner
             .lock()
             .map(|profile| profile.clone())
-            .unwrap_or_else(|_| WorkspaceProfile::self_targeted(self.engine_root.clone()))
+            .unwrap_or_else(|_| WorkspaceProfile::self_targeted(self.engine_root.clone()));
+        if let Err(error) = apply_repository_profile(&mut profile) {
+            profile.error = Some(error);
+        }
+        profile
     }
 
     pub fn set_target(&self, target_root: Option<String>) -> Result<WorkspaceProfile, String> {
         let trimmed = target_root.unwrap_or_default().trim().to_string();
         let profile = if trimmed.is_empty() {
             clear_stored_profile(&self.store_path)?;
-            WorkspaceProfile::self_targeted(self.engine_root.clone())
+            profile_from_target(&self.engine_root, &self.engine_root, "self")?
         } else {
             let profile = profile_from_target(&self.engine_root, Path::new(&trimmed), "saved")?;
             save_stored_profile(&self.store_path, &profile)?;
@@ -194,8 +199,14 @@ fn load_stored_profile(engine_root: &Path, store_path: &Path) -> Option<Workspac
             {
                 profile.workflow_path = workflow_path;
             }
-            profile.cli_path = stored.cli_path.filter(|value| !value.trim().is_empty());
-            Some(profile)
+            if let Some(cli_path) = stored.cli_path.filter(|value| !value.trim().is_empty()) {
+                profile.cli_path = Some(cli_path);
+            }
+            // Repository-owned configuration takes precedence over a saved UI snapshot.
+            match apply_repository_profile(&mut profile) {
+                Ok(()) => Some(profile),
+                Err(error) => Some(profile.with_error(error)),
+            }
         }
         Err(error) => Some(
             WorkspaceProfile::self_targeted(engine_root.to_path_buf())
@@ -217,7 +228,7 @@ fn profile_from_target(
             target.display()
         ));
     }
-    Ok(WorkspaceProfile {
+    let mut profile = WorkspaceProfile {
         engine_root: canonicalize_or_keep(engine_root.to_path_buf())
             .display()
             .to_string(),
@@ -226,7 +237,42 @@ fn profile_from_target(
         cli_path: None,
         source: source.into(),
         error: None,
-    })
+    };
+    apply_repository_profile(&mut profile)?;
+    Ok(profile)
+}
+
+fn apply_repository_profile(profile: &mut WorkspaceProfile) -> Result<(), String> {
+    for relative in [".shea/app-profile.json", ".shea/app-profile.local.json"] {
+        let path = profile.target_path().join(relative);
+        if !path.exists() {
+            continue;
+        }
+        let text = fs::read_to_string(&path)
+            .map_err(|error| format!("cannot read {relative}: {error}"))?;
+        let stored: StoredWorkspaceProfile =
+            serde_json::from_str(&text).map_err(|error| format!("invalid {relative}: {error}"))?;
+        if let Some(workflow) = stored.workflow_path {
+            if workflow.trim().is_empty() {
+                return Err(format!("empty workflow_path in {relative}"));
+            }
+            profile.workflow_path = workflow;
+        }
+        if let Some(cli) = stored.cli_path {
+            profile.cli_path = (!cli.trim().is_empty()).then_some(cli);
+        }
+    }
+    let root = profile.target_path();
+    let workflow = profile.workflow_file_path();
+    if workflow
+        .components()
+        .any(|part| matches!(part, std::path::Component::ParentDir))
+        || !workflow.starts_with(&root)
+        || (workflow.exists() && !canonicalize_or_keep(workflow).starts_with(&root))
+    {
+        return Err("workflow_path must remain inside the target repository".into());
+    }
+    Ok(())
 }
 
 fn save_stored_profile(store_path: &Path, profile: &WorkspaceProfile) -> Result<(), String> {
@@ -370,6 +416,35 @@ mod tests {
         let path = temp_path(name);
         fs::create_dir_all(&path).unwrap();
         path
+    }
+
+    #[test]
+    fn repository_profiles_override_stale_saved_defaults_and_reject_escape() {
+        let target = temp_dir("repository-profile");
+        let engine = temp_dir("profile-engine");
+        fs::create_dir_all(target.join(".shea")).unwrap();
+        fs::write(
+            target.join(".shea/app-profile.json"),
+            r#"{"workflow_path":".shea/workflows/target.md"}"#,
+        )
+        .unwrap();
+        fs::write(
+            target.join(".shea/app-profile.local.json"),
+            r#"{"cli_path":"/local/legacy"}"#,
+        )
+        .unwrap();
+        let store = target.join("ui-profile.json");
+        fs::write(&store, serde_json::json!({"target_root":target,"workflow_path":"stale.md","cli_path":"/old/cli"}).to_string()).unwrap();
+        let profile = initial_workspace_profile(engine.clone(), &[OsString::from("app")], &store);
+        assert_eq!(profile.workflow_path, ".shea/workflows/target.md");
+        assert_eq!(profile.cli_path.as_deref(), Some("/local/legacy"));
+        fs::write(
+            target.join(".shea/app-profile.local.json"),
+            r#"{"workflow_path":"../other.md"}"#,
+        )
+        .unwrap();
+        let profile = initial_workspace_profile(engine, &[OsString::from("app")], &store);
+        assert!(profile.error.unwrap().contains("inside the target"));
     }
 
     fn temp_path(name: &str) -> PathBuf {

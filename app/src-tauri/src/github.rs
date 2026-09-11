@@ -64,9 +64,14 @@ pub struct IssueTimelineEventSnapshot {
 }
 
 #[tauri::command]
-pub async fn get_github_user() -> Result<GitHubUserSnapshot, String> {
-    tauri::async_runtime::spawn_blocking(|| {
+pub async fn get_github_user(
+    workspace: State<'_, WorkspaceManager>,
+) -> Result<GitHubUserSnapshot, String> {
+    let workspace = workspace.current();
+    tauri::async_runtime::spawn_blocking(move || {
+        let environment = crate::cli::workspace_read_environment(&workspace)?;
         let output = Command::new("gh")
+            .envs(&environment)
             .args(["api", "user"])
             .output()
             .map_err(|error| format!("failed to run gh api user: {error}"))?;
@@ -126,13 +131,18 @@ pub async fn get_issue_timeline(
                 "Target GitHub repository is not configured.",
             ));
         };
-        read_issue_timeline(&repository, &issue_ref)
+        let environment = crate::cli::workspace_read_environment(&workspace_profile)?;
+        read_issue_timeline(&repository, &issue_ref, &environment)
     })
     .await
     .map_err(|error| format!("github issue timeline task failed: {error}"))?
 }
 
-fn read_issue_timeline(repository: &str, issue_ref: &str) -> Result<IssueTimelineSnapshot, String> {
+fn read_issue_timeline(
+    repository: &str,
+    issue_ref: &str,
+    environment: &std::collections::BTreeMap<String, String>,
+) -> Result<IssueTimelineSnapshot, String> {
     let Some(number) = issue_number(issue_ref) else {
         return Ok(unavailable_issue_timeline(
             repository,
@@ -142,6 +152,7 @@ fn read_issue_timeline(repository: &str, issue_ref: &str) -> Result<IssueTimelin
     };
     let issue_endpoint = format!("repos/{repository}/issues/{number}");
     let issue_output = Command::new("gh")
+        .envs(environment)
         .args(["api", &issue_endpoint])
         .output()
         .map_err(|error| format!("failed to run gh api issue read: {error}"))?;
@@ -157,6 +168,7 @@ fn read_issue_timeline(repository: &str, issue_ref: &str) -> Result<IssueTimelin
 
     let comments_endpoint = format!("repos/{repository}/issues/{number}/comments?per_page=100");
     let comments_output = Command::new("gh")
+        .envs(environment)
         .args(["api", "--paginate", "--slurp", &comments_endpoint])
         .output()
         .map_err(|error| format!("failed to run gh api issue comments read: {error}"))?;
@@ -171,6 +183,7 @@ fn read_issue_timeline(repository: &str, issue_ref: &str) -> Result<IssueTimelin
         .map_err(|error| format!("invalid gh issue comments JSON: {error}"))?;
     let timeline_endpoint = format!("repos/{repository}/issues/{number}/timeline?per_page=100");
     let timeline_output = Command::new("gh")
+        .envs(environment)
         .args(["api", "--paginate", "--slurp", &timeline_endpoint])
         .output()
         .map_err(|error| format!("failed to run gh api issue timeline read: {error}"))?;

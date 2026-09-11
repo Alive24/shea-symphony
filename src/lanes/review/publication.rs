@@ -141,6 +141,45 @@ pub(super) fn pending_publication(
     Ok(pending)
 }
 
+/// A completed job alone is not proof that its evidence was published.
+pub(super) fn latest_publication_status(
+    config: &RuntimeConfig,
+    issue_ref: &str,
+) -> Result<Option<serde_json::Value>, Failure> {
+    let selected = if let Some(pending) = pending_publication(config, issue_ref)? {
+        Some(pending)
+    } else {
+        let root = issue_root(config, issue_ref);
+        if !root.exists() {
+            return Ok(None);
+        }
+        let mut paths = fs::read_dir(root)?
+            .map(|entry| entry.map(|entry| entry.path()))
+            .collect::<Result<Vec<_>, _>>()?;
+        paths.retain(|path| {
+            path.extension().and_then(|extension| extension.to_str()) == Some("json")
+        });
+        paths.sort_by_key(|path| {
+            fs::metadata(path)
+                .and_then(|metadata| metadata.modified())
+                .ok()
+        });
+        paths
+            .pop()
+            .map(|path| ReviewPublication::read(&path).map(|receipt| (path, receipt)))
+            .transpose()?
+    };
+    Ok(selected.map(|(path, receipt)| {
+        serde_json::json!({
+            "issue_ref": issue_ref, "state": receipt.state, "receipt_path": path,
+            "run_id": receipt.job.as_ref().map(|job| &job.id),
+            "runtime_revision": receipt.runtime_revision,
+            "terminal_result_captured": require_terminal(&receipt).is_ok(),
+            "diagnostic": receipt.diagnostic,
+        })
+    }))
+}
+
 pub(super) fn require_no_pending(config: &RuntimeConfig, issue_ref: &str) -> Result<(), Failure> {
     if let Some((path, receipt)) = pending_publication(config, issue_ref)? {
         return Err(format!(
@@ -179,5 +218,12 @@ mod tests {
         receipt.state = PublicationState::Complete;
         receipt.save(&path).unwrap();
         require_no_pending(&config, &issue.identifier).unwrap();
+        let status = latest_publication_status(&config, &issue.identifier)
+            .unwrap()
+            .unwrap();
+        assert_eq!(status["state"], "Complete");
+        assert_eq!(status["terminal_result_captured"], false);
+        fs::write(&path, "invalid JSON").unwrap();
+        assert!(latest_publication_status(&config, &issue.identifier).is_err());
     }
 }

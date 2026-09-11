@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { getAppReadiness } from '../reviewActions.ts';
   import type { GitHubUserSnapshot, WorkspaceProfile } from '../tauriAutoloop.ts';
 
   type HandoffTarget = 'codex-app' | 'claude-code' | 'gemini-cli';
@@ -29,6 +30,19 @@
   export let onWorkspaceReset: () => void = () => {};
 
   let handoffMenuOpen = false;
+  let readinessBusy = false;
+  let readinessMessage = '';
+  let readinessFailed = false;
+  async function checkReadiness() {
+    readinessBusy = true;
+    readinessMessage = '';
+    try {
+      const result = await getAppReadiness();
+      readinessFailed = !result.ready;
+      readinessMessage = `Legacy CLI ${result.runtime.source_revision.slice(0, 8)} · local resources and environment ready. Issue eligibility is checked separately.`;
+    } catch (error) { readinessFailed = true; readinessMessage = String(error); }
+    finally { readinessBusy = false; }
+  }
 
   $: selectedHandoffTarget =
     handoffTargets.find((target) => target.id === handoffTarget) ?? handoffTargets[0];
@@ -113,6 +127,13 @@
         <small class:settings-error={workspaceError}>
           {workspaceError || `${workspaceProfile.source} · ${workspaceProfile.targetRoot || workspaceProfile.engineRoot}`}
         </small>
+      </section>
+
+      <section class="settings-section settings-section-inline">
+        <span class="settings-section-label">Legacy runtime</span>
+        <small>{workspaceProfile.workflowPath}</small>
+        <button class="btn btn-ghost" type="button" disabled={readinessBusy || workspaceBusy} onclick={checkReadiness}>{readinessBusy ? 'Checking setup…' : 'Check App setup'}</button>
+        {#if readinessMessage}<small class:settings-error={readinessFailed}>{readinessMessage}</small>{/if}
       </section>
 
       <section class="settings-section settings-section-inline">

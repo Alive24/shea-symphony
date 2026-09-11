@@ -88,7 +88,59 @@ pub fn shea_command_for_workspace(
     args: &[&str],
     workspace: &WorkspaceProfile,
 ) -> Result<Command, String> {
-    Ok(command_from_spec(shea_command_spec(args, workspace)?))
+    if let Some(error) = &workspace.error {
+        return Err(error.clone());
+    }
+    let mut command = command_from_spec(shea_command_spec(args, workspace)?);
+    let config = workspace_runtime_config(workspace)?;
+    let profile = if args.contains(&"--write") {
+        shea_symphony::runtime_profile::resolve_runtime_readiness(
+            &config.runtime_profile,
+            &config.tracker,
+            &workspace.target_path(),
+        )
+        .map_err(|error| error.to_string())?
+        .profile
+    } else {
+        shea_symphony::runtime_profile::load_runtime_profile(&config.runtime_profile)
+            .map_err(|error| error.to_string())?
+    };
+    let mut environment = std::collections::BTreeMap::new();
+    shea_symphony::runtime_profile::apply_runtime_profile_environment(
+        &mut environment,
+        profile.as_ref(),
+    );
+    command.envs(environment);
+    Ok(command)
+}
+
+pub fn workspace_runtime_config(
+    workspace: &WorkspaceProfile,
+) -> Result<shea_symphony::config::RuntimeConfig, String> {
+    if let Some(error) = &workspace.error {
+        return Err(error.clone());
+    }
+    let path = workspace.workflow_file_path();
+    let workflow = shea_symphony::workflow::WorkflowDefinition::load(&path)
+        .map_err(|error| error.to_string())?;
+    let config = shea_symphony::config::RuntimeConfig::from_workflow(&workflow, &path)
+        .map_err(|error| error.to_string())?;
+    config.validate().map_err(|error| error.to_string())?;
+    Ok(config)
+}
+
+pub fn workspace_read_environment(
+    workspace: &WorkspaceProfile,
+) -> Result<std::collections::BTreeMap<String, String>, String> {
+    let config = workspace_runtime_config(workspace)?;
+    let profile = shea_symphony::runtime_profile::load_runtime_profile(&config.runtime_profile)
+        .map_err(|error| error.to_string())?;
+    let mut environment = std::collections::BTreeMap::new();
+    shea_symphony::runtime_profile::apply_runtime_profile_environment(
+        &mut environment,
+        profile.as_ref(),
+    );
+    Ok(environment)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -364,5 +416,66 @@ branch refs/heads/main
             spec.args,
             vec!["doctor", ".shea/workflows/shea-symphony.md"]
         );
+    }
+}
+
+#[cfg(all(test, unix))]
+mod app_environment_tests {
+    use super::*;
+    use serde_json::json;
+    use std::{fs, os::unix::fs::PermissionsExt};
+
+    #[test]
+    fn desktop_command_receives_profile_path_and_write_refuses_source_drift() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(temp.path()).unwrap();
+        fs::create_dir_all(root.join(".shea/workflows")).unwrap();
+        fs::write(root.join("requirements.txt"), "fixture=1\n").unwrap();
+        let hash = Command::new("git")
+            .args(["hash-object", "requirements.txt"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        assert!(hash.status.success());
+        fs::write(root.join(".shea/workflows/test.md"), "---\ntracker:\n  kind: memory\nruntime_profile:\n  required: true\n---\nFixture prompt").unwrap();
+        let tool = root.join("tool");
+        fs::write(&tool, "#!/bin/sh\nprintf 'fixture-tool 1\\n'\n").unwrap();
+        fs::set_permissions(&tool, fs::Permissions::from_mode(0o755)).unwrap();
+        let cli = root.join("legacy");
+        let identity = shea_symphony::runtime_identity::RuntimeIdentity::for_role(
+            shea_symphony::runtime_identity::RuntimeRole::LegacyCli,
+        );
+        fs::write(&cli, format!("#!/bin/sh\nif [ \"$1\" = --runtime-info ]; then\nprintf '%s\\n' '{}'\nelse\nprintf '%s' \"$PATH\"\nfi\n", serde_json::to_string(&identity).unwrap())).unwrap();
+        fs::set_permissions(&cli, fs::Permissions::from_mode(0o755)).unwrap();
+        let selected_path = format!("{}:/usr/bin:/bin", root.display());
+        let profile_path = root.join(".shea/runtime-profile.json");
+        let mut runtime = json!({"schema_version":1,"profile_id":"desktop-fixture","generated_at":"2026-09-11T00:00:00Z","repository":{"id":"fixture/repo"},
+            "requirement_sources":[{"path":"requirements.txt","git_blob":String::from_utf8(hash.stdout).unwrap().trim()}],
+            "tools":[{"id":"tool","executable":tool,"observed_version":"fixture-tool 1","version_args":["--version"]}],"environment":{"PATH":selected_path}});
+        fs::write(&profile_path, runtime.to_string()).unwrap();
+        let workspace = WorkspaceProfile {
+            engine_root: root.display().to_string(),
+            target_root: root.display().to_string(),
+            workflow_path: ".shea/workflows/test.md".into(),
+            cli_path: Some(cli.display().to_string()),
+            source: "test".into(),
+            error: None,
+        };
+        let output = shea_command_for_workspace(&["review", "status"], &workspace)
+            .unwrap()
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8(output.stdout).unwrap(), selected_path);
+        assert!(shea_command_for_workspace(&["review", "once", "--write"], &workspace).is_ok());
+        fs::write(root.join("requirements.txt"), "fixture=2\n").unwrap();
+        assert!(
+            shea_command_for_workspace(&["review", "once", "--write"], &workspace)
+                .unwrap_err()
+                .contains("drift")
+        );
+        runtime["environment"]["NODE_OPTIONS"] = json!("--require startup.js");
+        fs::write(profile_path, runtime.to_string()).unwrap();
+        assert!(shea_command_for_workspace(&["review", "status"], &workspace).is_err());
     }
 }

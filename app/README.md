@@ -46,6 +46,32 @@ checks its machine-readable role and source revision, and places it under
 builds the supported local Tauri App bundle (without invoking an installer or
 signing flow). It fails clearly when the staged artifact is missing.
 
+## Legacy Workspace And Review Integration
+
+Select a target in Settings or launch with `--workdir /absolute/repository`.
+The App resolves the target's `.shea/app-profile.json`, then its ignored
+`.shea/app-profile.local.json`; repository values override saved UI defaults.
+Workflow paths must stay inside the selected repository. The same validated
+`.shea/runtime-profile.json` overlay reaches CLI reads, GitHub reads and lane
+processes. Write commands additionally verify requirement fingerprints and tool
+versions before launch. No shell startup file or Temporal service is required.
+
+Use **Check App setup** in Settings to validate the Legacy identity, recovery
+command, local profile and all three App handoff prompts. This is local setup
+evidence, not tracker eligibility or authorization to launch a lane.
+
+Each Issue detail has an Independent Review panel. **Prepare Review** performs
+the guarded CLI dry run; **Confirm and start Review** starts one independent
+review for that Issue. **Prepare recovery** and **Confirm recovery** resume a
+captured terminal result without another backend. Previews expire after five
+minutes, cannot be reused, and are invalidated by workspace/configuration changes.
+The CLI remains the owner of claims, exclusion, freshness and state-last writes.
+
+Publication completion requires a final durable receipt. A terminal backend job
+without one remains unverified; malformed, superseded or incomplete running
+receipts route to Doctor. Merely moving an Issue to Agent Review never launches
+it. All Issue actions are explicit; opening the App does not start Autoloop.
+
 Stable packages are produced only by `.github/workflows/release.yml`: an Apple
 Silicon macOS App zip and a Windows x64 NSIS installer. The workflow verifies
 the embedded sidecar from each native package, aggregates checksums and release

@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { autoloopStateStore, REFRESH_REQUEST_EVENT } from "./uiState.ts";
+  import ReviewControls from "./ReviewControls.svelte";
+  import { autoloopStateStore, workspaceProfileStore, REFRESH_REQUEST_EVENT } from "./uiState.ts";
   import { operatorOverviewStore } from "./operatorOverviewStore.ts";
   import { localArtifactRefreshEventDetail } from "./localArtifactRefresh.ts";
   import {
@@ -945,6 +946,10 @@
       >
     </div>
   </section>
+
+  {#key `${$workspaceProfileStore.targetRoot}:${selectedIssue.id}`}
+    <ReviewControls issue={selectedIssue.id} workspace={$workspaceProfileStore.targetRoot} />
+  {/key}
 
   <section
     class="lane-detail-shell"

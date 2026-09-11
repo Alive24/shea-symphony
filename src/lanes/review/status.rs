@@ -100,11 +100,24 @@ pub(crate) fn review_status(
         }
     }).collect::<Vec<_>>();
     if options.json {
+        let latest_publications = issues.iter().filter_map(|issue| {
+            match super::publication::latest_publication_status(&config, &issue.identifier) {
+                Ok(value) => value,
+                Err(error) => Some(serde_json::json!({"issue_ref":issue.identifier,"diagnostic":error.to_string()})),
+            }
+        }).collect::<Vec<_>>();
         let mut payload = serde_json::to_value(&payload)?;
         payload
             .as_object_mut()
             .ok_or("Review status must be an object")?
             .insert("pending_publications".into(), publications.into());
+        // Include final receipts as well as pending ones; consumers must never infer
+        // publication completion from a terminal backend job or tracker status.
+        payload["publications"] = serde_json::json!(latest_publications);
+        payload["issues"] = serde_json::json!(issues
+            .iter()
+            .map(|issue| serde_json::json!({"identifier":issue.identifier,"state":issue.state}))
+            .collect::<Vec<_>>());
         println!("{}", serde_json::to_string_pretty(&payload)?);
     } else {
         println!("{}", render_review_status_human(&payload, options.verbose));

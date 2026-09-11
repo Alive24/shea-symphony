@@ -1591,7 +1591,7 @@ pub fn render_review_workpad_with_workflow(
                 &[
                     format!("- Reason: {reason}"),
                     "- Automatic Review Agent output did not establish a conclusive pass.".into(),
-                    "- Route to `Rework`; do not move to `Human Review`.".into(),
+                    "- Missing context alone requires `Need Human Input`; confirmed defects still require `Rework`.".into(),
                 ]
                 .join("\n"),
             )
@@ -1602,7 +1602,7 @@ pub fn render_review_workpad_with_workflow(
         .report
         .as_ref()
         .and_then(agent_review_note)
-        .unwrap_or_else(|| "- No Agent Review note captured.".into());
+        .unwrap_or_else(|| rejected_review_diagnostic(job));
     let has_agent_review_note = agent_review_note != "- No Agent Review note captured.";
     let findings_section =
         render_parsed_findings_section(job.report.as_ref(), has_agent_review_note);
@@ -1791,6 +1791,34 @@ fn render_section(title: &str, body: &str) -> String {
         return String::new();
     }
     format!("### {title}\n\n{}\n\n", body.trim())
+}
+
+fn rejected_review_diagnostic(job: &ReviewJob) -> String {
+    let Some(error) = job.error.as_deref() else {
+        return "- No Agent Review note captured.".into();
+    };
+    let mut text = format!(
+        "No accepted Review verdict. Execution or validation failed: {}.\n\nThe output below, when present, is unaccepted diagnostic evidence and cannot authorize a PASS.",
+        html_escape_summary(error)
+    );
+    // Only the wrapper-owned result artifact is read, never a protocol transcript.
+    if let Some(path) = job.artifact_path.as_deref() {
+        if let Ok(bytes) = std::fs::read(path) {
+            if let Ok(artifact) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                if let Some(raw) = artifact.get("structured_output").and_then(|v| v.as_str()) {
+                    let excerpt: String = raw.chars().take(12_000).collect();
+                    text.push_str(&format!(
+                        "\n\n<details>\n<summary>Rejected structured output (unaccepted)</summary>\n\n<pre>{}</pre>\n\n</details>",
+                        html_escape_summary(&excerpt)
+                    ));
+                    if raw.chars().count() > 12_000 {
+                        text.push_str("\n\nExcerpt truncated; the complete result remains in the recorded local artifact.");
+                    }
+                }
+            }
+        }
+    }
+    text
 }
 
 fn render_log_section(title: &str, content: Option<&str>) -> Option<String> {
@@ -3014,7 +3042,7 @@ mod tests {
                         "evidence": "fixture"
                     }]
                 }),
-                ReviewOutcome::InconclusiveNeedsRework,
+                ReviewOutcome::NeedsHumanInput,
             ),
         ];
 
@@ -3547,15 +3575,15 @@ mod tests {
     }
 
     #[test]
-    fn exact_first_line_needs_context_still_routes_to_rework() {
+    fn exact_first_line_needs_context_requires_human_input() {
         let job = completed_gemini_review(
             "Review Result: NEEDS_CONTEXT\n\nThe linked PR could not be inspected.",
         );
 
         let decision = review_gate_decision(&job);
 
-        assert_eq!(decision.outcome, ReviewOutcome::InconclusiveNeedsRework);
-        assert_eq!(decision.target_state, Some("rework"));
+        assert_eq!(decision.outcome, ReviewOutcome::NeedsHumanInput);
+        assert_eq!(decision.target_state, Some("need_human_input"));
     }
 
     #[test]
@@ -3987,6 +4015,31 @@ mod tests {
     }
 
     #[test]
+    fn rejected_result_is_published_as_unaccepted_diagnostics() {
+        let dir = tempfile::tempdir().unwrap();
+        let artifact = dir.path().join("invalid.output.json");
+        std::fs::write(&artifact, serde_json::json!({
+            "structured_output": "{\"terminal_classification\":\"pass\",\"findings\":[\"missing context <script>\"]}"
+        }).to_string()).unwrap();
+        let mut job = ReviewJob::failed_unavailable(
+            "#1",
+            "claude-code",
+            "pass conflicts with blocking findings",
+        );
+        job.artifact_path = Some(artifact);
+        let body = render_review_workpad(&issue(), &job);
+        assert!(body.contains("No accepted Review verdict"));
+        assert!(body.contains("Rejected structured output (unaccepted)"));
+        assert!(body.contains("missing context &lt;script&gt;"));
+        assert!(!body.contains("Review pass evidence: `recorded`"));
+        assert!(job.report.is_none());
+        assert_eq!(
+            review_gate_decision(&job).outcome,
+            ReviewOutcome::NeedsHumanInput
+        );
+    }
+
+    #[test]
     fn review_job_ledger_record_captures_decision_and_paths() {
         let job = ReviewJob {
             id: "job".into(),
@@ -4163,9 +4216,9 @@ mod tests {
         let inconclusive_decision = review_gate_decision(&inconclusive);
         assert_eq!(
             inconclusive_decision.outcome,
-            ReviewOutcome::InconclusiveNeedsRework
+            ReviewOutcome::NeedsHumanInput
         );
-        assert_eq!(inconclusive_decision.target_state, Some("rework"));
+        assert_eq!(inconclusive_decision.target_state, Some("need_human_input"));
         assert_ne!(inconclusive_decision.target_state, Some("human_review"));
     }
 
@@ -4626,7 +4679,7 @@ mod tests {
             review_usage_limit_pause(&job).unwrap().classifier,
             "quota_exceeded"
         );
-        assert!(workpad.contains("- Result: `InconclusiveNeedsRework`"));
+        assert!(workpad.contains("- Result: `NeedsHumanInput`"));
         assert!(workpad.contains("### Inconclusive Review Diagnostic"));
         assert!(!workpad.contains("### Usage Limit Diagnostic"));
         assert!(!workpad.contains("unavailable or inconclusive review must not move"));

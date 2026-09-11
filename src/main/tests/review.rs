@@ -28,6 +28,7 @@ fn review_issue_with_ref(identifier: &str, title: &str) -> TrackerIssue {
             )),
             state: Some("OPEN".into()),
             is_draft: Some(false),
+            head_sha: Some("review-fixture-head".into()),
             ..Default::default()
         });
     issue
@@ -456,7 +457,9 @@ fn review_pass_checklist_update_removes_appended_workpad_before_editing_body() {
 
 #[test]
 fn review_pass_updates_issue_body_checkboxes_before_human_review_transition() {
-    let config = test_config();
+    let temp = tempfile::tempdir().unwrap();
+    let mut config = test_config();
+    config.observability.logs_root = temp.path().to_path_buf();
     let adapter = RecordingAdapter::default();
     let mut issue = review_issue_with_ref("#67", "Checklist review");
     issue.description = Some(
@@ -520,8 +523,8 @@ fn review_pass_updates_issue_body_checkboxes_before_human_review_transition() {
     assert_eq!(
         adapter.operations(),
         vec![
-            "update_issue_content:#67",
             "comment:#67",
+            "update_issue_content:#67",
             "set_state:#67:human_review"
         ]
     );
@@ -611,4 +614,288 @@ fn automatic_review_prompt_delivers_snapshot_as_data_without_template_execution(
         serde_json::from_str(&prompt[snapshot_start..]).unwrap();
     assert_eq!(snapshot, issue);
     assert!(snapshot.description.unwrap().contains("{{ issue.title }}"));
+}
+
+fn publication_fixture() -> (
+    tempfile::TempDir,
+    RuntimeConfig,
+    RecordingAdapter,
+    TrackerIssue,
+    ReviewJob,
+) {
+    let temp = tempfile::tempdir().unwrap();
+    let mut config = test_config();
+    config.observability.logs_root = temp.path().to_path_buf();
+    let adapter = RecordingAdapter::default();
+    let mut issue = review_issue_with_ref("#901", "Publication fixture");
+    issue.description = Some("## Expected Outcome\n\n- [ ] Tested result".into());
+    adapter
+        .issues
+        .borrow_mut()
+        .insert(issue.identifier.clone(), issue.clone());
+    let job = ReviewJob {
+        id: "publication-run-901".into(),
+        issue_ref: issue.identifier.clone(),
+        backend: "fixture".into(),
+        state: ReviewJobState::Completed,
+        artifact_path: None,
+        ledger_path: None,
+        backend_session_id: None,
+        report: Some(shea_symphony::review::AgentReviewReport {
+            summary: Some("Review Result: PASS".into()),
+            ..Default::default()
+        }),
+        error: None,
+    };
+    (temp, config, adapter, issue, job)
+}
+
+#[test]
+fn review_publication_comment_failure_preserves_result_and_does_not_accept() {
+    let (_temp, config, mut adapter, issue, job) = publication_fixture();
+    adapter.fail_comment = true;
+    assert!(apply_review_result(None, &config, &adapter, "901", &issue, &job, None, None).is_err());
+    assert!(adapter.operations().is_empty());
+    assert_eq!(
+        adapter.get_issue("#901").unwrap().unwrap().state,
+        "Agent Review"
+    );
+    let receipts = std::fs::read_dir(
+        config
+            .observability
+            .logs_root
+            .join("reviews/publications")
+            .join(shea_symphony::workspace::safe_identifier("#901")),
+    )
+    .unwrap();
+    let receipt = receipts
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.extension().is_some_and(|ext| ext == "json"))
+        .unwrap();
+    let saved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(receipt).unwrap()).unwrap();
+    assert_eq!(saved["state"], "ResultReady");
+    assert_eq!(saved["job"]["id"], job.id);
+    adapter.fail_comment = false;
+    apply_review_result(None, &config, &adapter, "#901", &issue, &job, None, None).unwrap();
+    let operations = adapter.operations();
+    apply_review_result(None, &config, &adapter, "#901", &issue, &job, None, None).unwrap();
+    assert_eq!(adapter.operations(), operations);
+    assert_eq!(
+        operations,
+        [
+            "comment:#901",
+            "update_issue_content:#901",
+            "set_state:#901:human_review"
+        ]
+    );
+}
+
+#[test]
+fn review_publication_recovers_server_accepted_comment_and_state_without_duplicates() {
+    let (_temp, config, mut adapter, issue, job) = publication_fixture();
+    adapter.fail_comment_after_apply = true;
+    adapter.fail_state_after_apply = true;
+    apply_review_result(None, &config, &adapter, "#901", &issue, &job, None, None).unwrap();
+    apply_review_result(None, &config, &adapter, "#901", &issue, &job, None, None).unwrap();
+    assert_eq!(
+        adapter.operations(),
+        [
+            "comment:#901",
+            "update_issue_content:#901",
+            "set_state:#901:human_review"
+        ]
+    );
+}
+
+#[test]
+fn review_publication_refuses_changed_head_contract_state_and_claim() {
+    for change in ["head", "body", "state", "claim", "closed", "draft"] {
+        let (_temp, config, adapter, mut issue, job) = publication_fixture();
+        let claim = LaneClaim::active(
+            &issue.identifier,
+            LaneClaimLane::Review,
+            LaneClaimActor::Codex,
+            LaneClaimSource::Manual,
+            1_789_000_000_123,
+        );
+        issue
+            .project_fields
+            .insert("Review Agent".into(), claim.render().into());
+        let mut changed = issue.clone();
+        match change {
+            "head" => changed.linked_pull_requests[0].head_sha = Some("new-head".into()),
+            "body" => changed.description = Some("Changed scope".into()),
+            "state" => changed.state = "Human Review".into(),
+            "claim" => {
+                changed
+                    .project_fields
+                    .insert("Review Agent".into(), "different owner".into());
+            }
+            "closed" => {
+                changed
+                    .project_fields
+                    .insert("GitHub Issue State".into(), "closed".into());
+            }
+            "draft" => changed.linked_pull_requests[0].is_draft = Some(true),
+            _ => unreachable!(),
+        }
+        adapter
+            .issues
+            .borrow_mut()
+            .insert(issue.identifier.clone(), changed);
+        assert!(
+            apply_review_result(
+                None,
+                &config,
+                &adapter,
+                "#901",
+                &issue,
+                &job,
+                Some(&claim),
+                None
+            )
+            .is_err(),
+            "{change}"
+        );
+        assert!(adapter.operations().is_empty(), "{change}");
+    }
+}
+
+#[test]
+fn review_publication_terminal_claim_follows_evidence_and_precedes_state() {
+    let (_temp, config, adapter, mut issue, job) = publication_fixture();
+    let claim = LaneClaim::active(
+        &issue.identifier,
+        LaneClaimLane::Review,
+        LaneClaimActor::Codex,
+        LaneClaimSource::Manual,
+        1_789_000_000_123,
+    );
+    issue
+        .project_fields
+        .insert("Review Agent".into(), claim.render().into());
+    adapter
+        .issues
+        .borrow_mut()
+        .insert(issue.identifier.clone(), issue.clone());
+    apply_review_result(
+        None,
+        &config,
+        &adapter,
+        "#901",
+        &issue,
+        &job,
+        Some(&claim),
+        None,
+    )
+    .unwrap();
+    let operations = adapter.operations();
+    assert_eq!(operations.first().unwrap(), "comment:#901");
+    assert!(operations[1].contains("Review Agent"));
+    assert_eq!(operations.last().unwrap(), "set_state:#901:human_review");
+}
+
+#[test]
+fn review_recover_cli_preserves_explicit_write_intent() {
+    assert!(matches!(
+        parse(&["review", "recover", "WORKFLOW.md", "#901"]),
+        Command::ReviewRecover { write: false, .. }
+    ));
+    assert!(matches!(
+        parse(&["review", "recover", "WORKFLOW.md", "#901", "--write"]),
+        Command::ReviewRecover { write: true, .. }
+    ));
+}
+
+#[test]
+fn review_publication_recovers_interruption_after_evidence_claim_and_checklist() {
+    let (_temp, config, mut adapter, mut issue, job) = publication_fixture();
+    let claim = LaneClaim::active(
+        &issue.identifier,
+        LaneClaimLane::Review,
+        LaneClaimActor::Codex,
+        LaneClaimSource::Manual,
+        1_789_000_000_123,
+    );
+    issue
+        .project_fields
+        .insert("Review Agent".into(), claim.render().into());
+    adapter
+        .issues
+        .borrow_mut()
+        .insert(issue.identifier.clone(), issue.clone());
+    adapter.fail_state_before_apply = true;
+    assert!(apply_review_result(
+        None,
+        &config,
+        &adapter,
+        "#901",
+        &issue,
+        &job,
+        Some(&claim),
+        None
+    )
+    .is_err());
+    assert_eq!(
+        adapter.get_issue("#901").unwrap().unwrap().state,
+        "Agent Review"
+    );
+    assert_eq!(adapter.operations().len(), 3);
+    adapter.fail_state_before_apply = false;
+    apply_review_result(
+        None,
+        &config,
+        &adapter,
+        "#901",
+        &issue,
+        &job,
+        Some(&claim),
+        None,
+    )
+    .unwrap();
+    assert_eq!(adapter.operations().len(), 4);
+    assert_eq!(
+        adapter.operations().last().unwrap(),
+        "set_state:#901:human_review"
+    );
+}
+
+#[test]
+fn review_publication_head_change_after_comment_cannot_accept_or_route() {
+    let (_temp, config, mut adapter, issue, job) = publication_fixture();
+    adapter.change_review_head_after_comment = true;
+    assert!(
+        apply_review_result(None, &config, &adapter, "#901", &issue, &job, None, None).is_err()
+    );
+    assert_eq!(adapter.operations(), ["comment:#901"]);
+    assert_eq!(
+        adapter.get_issue("#901").unwrap().unwrap().state,
+        "Agent Review"
+    );
+}
+
+#[test]
+fn review_publication_does_not_duplicate_previously_visible_evidence() {
+    let (_temp, config, mut adapter, mut issue, job) = publication_fixture();
+    issue.description = None;
+    adapter
+        .issues
+        .borrow_mut()
+        .insert(issue.identifier.clone(), issue.clone());
+    adapter.fail_state_before_apply = true;
+    assert!(
+        apply_review_result(None, &config, &adapter, "#901", &issue, &job, None, None).is_err()
+    );
+    adapter
+        .issues
+        .borrow_mut()
+        .get_mut("#901")
+        .unwrap()
+        .description = None;
+    adapter.fail_state_before_apply = false;
+    assert!(
+        apply_review_result(None, &config, &adapter, "#901", &issue, &job, None, None).is_err()
+    );
+    assert_eq!(adapter.operations(), ["comment:#901"]);
 }

@@ -11,6 +11,7 @@ pub enum ReviewOutcome {
     PassedToHumanReview,
     PassedToMerging,
     NeedsRework,
+    // Retained for deserializing historical ledgers; new context-only results use NeedsHumanInput.
     InconclusiveNeedsRework,
     NeedsHumanInput,
     BackendUnavailable,
@@ -105,10 +106,10 @@ pub fn review_gate_decision_for_actor(job: &ReviewJob, actor: ReviewActor) -> Re
                 message: "Confirmed Agent Review findings require Rework.".into(),
             },
             Some(report) if report.is_inconclusive() => ReviewGateDecision {
-                outcome: ReviewOutcome::InconclusiveNeedsRework,
-                target_state: Some("rework"),
+                outcome: ReviewOutcome::NeedsHumanInput,
+                target_state: Some("need_human_input"),
                 message: format!(
-                    "Agent Review was inconclusive and requires Rework: {}.",
+                    "Agent Review lacks required context; no implementation Rework is established: {}.",
                     report
                         .inconclusive_reason()
                         .unwrap_or_else(|| "review could not complete with durable evidence".into())

@@ -31,6 +31,7 @@ resolved workflow or profile values into this contract.
 ## Targeted Reads
 
 - `workflow.resolve`: resolve the active workflow and selected adapter.
+- `review.status`: inspect the selected Issue's Review job and pending publication without starting a backend.
 - `issue.read`: read one issue's normalized state, fields, and issue contract.
 - `issue.inspect`: read one issue's lane-specific eligibility and quality gate.
 - `evidence.read`: read one issue's canonical workpad and append-only evidence.
@@ -42,6 +43,8 @@ scan is not a substitute for a targeted read.
 
 ## Guarded Actions
 
+- `review.once`: run one independent review for an authorized Issue through the wrapper-owned claim and publication boundary.
+- `review.recover`: resume publication of a captured terminal Review result without launching another backend.
 - `workspace.adopt`: record the selected canonical issue workspace.
 - `lane.claim`: record one lane's ownership after eligibility and readiness.
 - `workpad.upsert`: merge named stable sections into the one canonical Main

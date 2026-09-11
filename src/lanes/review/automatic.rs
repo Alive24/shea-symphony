@@ -10,7 +10,7 @@ use shea_symphony::issue_workspace::{
 use shea_symphony::lane_claim::{
     LaneClaim, LaneClaimActor, LaneClaimLane, LaneClaimSource, LaneClaimState,
 };
-use shea_symphony::model::TrackerIssue;
+use shea_symphony::model::{normalize_state, TrackerIssue};
 use shea_symphony::progress::{run_with_progress_heartbeat, ProgressHeartbeatSpec};
 use shea_symphony::prompt::{render_prompt, render_template_with_values};
 use shea_symphony::review::{
@@ -23,7 +23,6 @@ use shea_symphony::review::{
     ReviewGateDecision, ReviewJob, ReviewJobState, ReviewOutcome, ReviewRepeatedFailureEvidence,
     ReviewRequest, ReviewRunEligibility,
 };
-use shea_symphony::rework::rework_transition_expected;
 #[cfg(test)]
 use shea_symphony::rework::{render_rework_diagnostic_workpad, ReworkDiagnostic};
 use shea_symphony::tracker::{adapter_from_config, ProjectFieldAssignment, TrackerAdapter};
@@ -31,6 +30,7 @@ use shea_symphony::workflow::{AgentLane, WorkflowDefinition};
 use shea_symphony::workpad_templates::{render_workpad_template, WorkpadTemplateId};
 
 use super::manual::{terminal_review_claim_value, write_terminal_review_claim};
+use super::publication::{self, PublicationState, ReviewPublication};
 use crate::lanes::claim::{lane_claim_for_issue, project_text_field, render_parseable_lane_claim};
 use crate::lanes::main_loop::run_loop_handoff_plan;
 use crate::orchestration::{
@@ -93,17 +93,45 @@ pub(crate) fn review_once(
     issue_ref: String,
     write: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    require_write_intent(write)?;
     let workflow = WorkflowDefinition::load(&workflow_path)?;
     let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
     config.validate()?;
     let adapter = adapter_from_config(&config);
+    let selected = adapter
+        .get_issue(&issue_ref)?
+        .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
+    let issue_ref = selected.identifier;
+    let _lock = if write {
+        Some(publication::lock_issue(&config, &issue_ref)?)
+    } else {
+        None
+    };
+    publication::require_no_pending(&config, &issue_ref)?;
     let issue = adapter
         .get_issue(&issue_ref)?
         .ok_or_else(|| format!("issue not found: {issue_ref}"))?;
+    let backend_kind = review_backend_kind_from_config(&config.review);
+    let worker_key = match review_run_eligibility(
+        &issue,
+        &config.tracker.state_map.agent_review,
+        &backend_kind,
+    ) {
+        ReviewRunEligibility::Eligible { worker_key } => worker_key,
+        other => return Err(format!("Review is not eligible: {other:?}").into()),
+    };
     let request = automatic_review_request(&workflow, &config, &issue)?;
-    let backend = review_backend_from_config(&config.review);
-    let mut job = run_configured_review_backend(&config, &issue, backend.as_ref(), request)?;
+    verify_review_workspace(&issue, &request.workspace)?;
+    if !write {
+        println!("review_once_dry_run issue={} backend={} workspace={} claim=prepared tracker=unchanged backend_started=false",
+            issue.identifier, backend_kind, request.workspace.display());
+        if let Some(error) = review_backend_from_config(&config.review).prelaunch_error() {
+            return Err(error.into());
+        }
+        return Ok(());
+    }
+    preflight_canonical_checkout_for_write_mode(&config, "review_once", true)?;
+    let claim = write_review_claim_field(&config, adapter.as_ref(), &issue, &worker_key)?;
+    let mut job = run_review_job(&workflow, &config, &issue, None, Some(&claim))?;
     let ledger_path =
         persist_review_job_ledger_record(&config.observability.logs_root, &issue, &mut job)?;
     apply_review_result(
@@ -113,10 +141,9 @@ pub(crate) fn review_once(
         &issue_ref,
         &issue,
         &job,
-        None,
+        Some(&claim),
         None,
     )?;
-
     let decision = review_gate_decision_for_issue(&job, &issue);
     println!(
         "review_once=ok issue_ref={issue_ref} backend={} outcome={:?} target_state={:?} ledger={}",
@@ -125,7 +152,98 @@ pub(crate) fn review_once(
         decision.target_state,
         ledger_path.display()
     );
-    println!("{}", decision.message);
+    Ok(())
+}
+
+pub(crate) fn review_recover(
+    workflow_path: PathBuf,
+    issue_ref: String,
+    write: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let workflow = WorkflowDefinition::load(&workflow_path)?;
+    let config = RuntimeConfig::from_workflow(&workflow, &workflow_path)?;
+    config.validate()?;
+    let adapter = adapter_from_config(&config);
+    let issue_ref = adapter
+        .get_issue(&issue_ref)?
+        .ok_or("Review Issue is missing")?
+        .identifier;
+    let _lock = if write {
+        Some(publication::lock_issue(&config, &issue_ref)?)
+    } else {
+        None
+    };
+    let Some((path, receipt)) = publication::pending_publication(&config, &issue_ref)? else {
+        println!("review_recover=no_op issue={issue_ref} reason=no_pending_publication");
+        return Ok(());
+    };
+    let job = publication::require_terminal(&receipt)?;
+    if !write {
+        println!(
+            "review_recover_dry_run issue={} run={} receipt={} backend_started=false",
+            issue_ref,
+            job.id,
+            path.display()
+        );
+        return Ok(());
+    }
+    let claim = receipt.claim.as_deref().map(LaneClaim::parse).transpose()?;
+    apply_review_result(
+        Some(&workflow),
+        &config,
+        adapter.as_ref(),
+        &issue_ref,
+        &receipt.issue,
+        job,
+        claim.as_ref(),
+        None,
+    )?;
+    println!(
+        "review_recover=ok issue={} run={} backend_started=false",
+        issue_ref, job.id
+    );
+    Ok(())
+}
+
+fn verify_review_workspace(
+    issue: &TrackerIssue,
+    workspace: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let prs = issue
+        .linked_pull_requests
+        .iter()
+        .filter(|pr| {
+            pr.state
+                .as_deref()
+                .is_some_and(|s| s.eq_ignore_ascii_case("open"))
+        })
+        .collect::<Vec<_>>();
+    if prs.len() != 1 || prs[0].is_draft != Some(false) {
+        return Err("Review requires one ready linked PR".into());
+    }
+    let head = prs[0]
+        .head_sha
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .ok_or("Review PR head is missing")?;
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(workspace)
+        .args(["rev-parse", "HEAD"])
+        .output()?;
+    if !output.status.success() || String::from_utf8_lossy(&output.stdout).trim() != head {
+        return Err(
+            "Review workspace HEAD does not match the linked PR; no backend was started".into(),
+        );
+    }
+    let status = std::process::Command::new("git")
+        .arg("-C")
+        .arg(workspace)
+        .args(["status", "--porcelain", "--untracked-files=no"])
+        .output()?;
+    if !status.status.success() || !status.stdout.is_empty() {
+        return Err("Review workspace has tracked changes".into());
+    }
     Ok(())
 }
 
@@ -349,6 +467,7 @@ pub(crate) fn review_loop_with_summary(
             TrackerIssue,
             LaneClaim,
             thread::JoinHandle<ReviewJob>,
+            std::fs::File,
         )> = Vec::new();
 
         for (slot, selected_issue) in selected.into_iter().enumerate() {
@@ -405,6 +524,23 @@ pub(crate) fn review_loop_with_summary(
                         continue;
                     }
 
+                    let operation_lock = match publication::lock_issue(
+                        &config,
+                        &selected_issue.identifier,
+                    )
+                    .and_then(|lock| {
+                        publication::require_no_pending(&config, &selected_issue.identifier)?;
+                        Ok(lock)
+                    }) {
+                        Ok(lock) => lock,
+                        Err(error) => {
+                            eprintln!(
+                                "review_loop_skip issue={} reason={error}",
+                                selected_issue.identifier
+                            );
+                            continue;
+                        }
+                    };
                     let latest = run_with_progress_heartbeat(
                         progress_spec_with_event_log(&config, "github_project_read")
                             .issue(selected_issue.identifier.clone())
@@ -424,6 +560,8 @@ pub(crate) fn review_loop_with_summary(
                         &backend_kind,
                     ) {
                         ReviewRunEligibility::Eligible { worker_key } => {
+                            let prepared = automatic_review_request(&workflow, &config, &latest)?;
+                            verify_review_workspace(&latest, &prepared.workspace)?;
                             let claim = write_review_claim_field(
                                 &config,
                                 adapter.as_ref(),
@@ -454,12 +592,16 @@ pub(crate) fn review_loop_with_summary(
                                     .map(|command| command.mode)
                                     .unwrap_or("job")
                             );
+                            let claim_for_job = claim.clone();
+                            let worker_lock = operation_lock.try_clone()?;
                             let handle = thread::spawn(move || {
+                                let _worker_lock = worker_lock;
                                 run_review_job(
                                     &workflow_for_job,
                                     &config_for_job,
                                     &issue_for_job,
                                     fake_outcome_for_job,
+                                    Some(&claim_for_job),
                                 )
                                 .unwrap_or_else(|error| {
                                     ReviewJob::failed_unavailable(
@@ -469,7 +611,13 @@ pub(crate) fn review_loop_with_summary(
                                     )
                                 })
                             });
-                            pending_review_jobs.push((worker_slot, latest, claim, handle));
+                            pending_review_jobs.push((
+                                worker_slot,
+                                latest,
+                                claim,
+                                handle,
+                                operation_lock,
+                            ));
                         }
                         ReviewRunEligibility::AlreadyQueued { worker_key } => {
                             summary.skipped_existing_worker += 1;
@@ -542,7 +690,7 @@ pub(crate) fn review_loop_with_summary(
             }
         }
 
-        for (worker_slot, latest, claim, handle) in pending_review_jobs {
+        for (worker_slot, latest, claim, handle, _operation_lock) in pending_review_jobs {
             let mut job = match handle.join() {
                 Ok(job) => job,
                 Err(_) => ReviewJob::failed_unavailable(
@@ -741,6 +889,9 @@ fn write_review_claim_field(
 ) -> Result<LaneClaim, Box<dyn std::error::Error>> {
     let claim = review_claim_for_issue(issue, worker_key);
     let claim_value = render_parseable_lane_claim(&claim)?;
+    let receipt_path =
+        publication::publication_path(config, &issue.identifier, Some(&claim), "starting");
+    ReviewPublication::new(issue, Some(&claim)).save(&receipt_path)?;
     let outcome = set_project_field_with_recovery(
         adapter,
         issue,
@@ -770,6 +921,15 @@ fn write_review_claim_field(
         claim.run,
         outcome.as_str()
     );
+    let readback = adapter
+        .get_issue(&issue.identifier)?
+        .ok_or("Review claim readback lost the Issue")?;
+    if project_text_field(&readback, "Review Agent").as_deref() != Some(claim_value.as_str()) {
+        return Err(
+            "Review claim readback does not match the prepared owner; no backend was started"
+                .into(),
+        );
+    }
     Ok(claim)
 }
 
@@ -778,59 +938,64 @@ fn run_review_job(
     config: &RuntimeConfig,
     issue: &TrackerIssue,
     fake_outcome: Option<FakeReviewOutcome>,
+    claim: Option<&LaneClaim>,
 ) -> Result<ReviewJob, Box<dyn std::error::Error>> {
     let request = automatic_review_request(workflow, config, issue)?;
-
-    if let Some(outcome) = fake_outcome {
-        let backend = FakeReviewBackend::new(outcome);
-        let job = backend.start(request)?;
-        let spec = review_backend_progress_spec(config, issue, backend.kind(), &job);
-        return Ok(run_with_progress_heartbeat(spec, || {
-            poll_review_job_until_terminal(
-                &backend,
-                job,
-                Duration::from_millis(config.review.timeout_ms),
-                Duration::from_millis(250),
-            )
-        })?);
-    }
-
-    let backend = review_backend_from_config(&config.review);
-    run_configured_review_backend(config, issue, backend.as_ref(), request)
-}
-
-fn run_configured_review_backend(
-    config: &RuntimeConfig,
-    issue: &TrackerIssue,
-    backend: &dyn ReviewBackend,
-    request: ReviewRequest,
-) -> Result<ReviewJob, Box<dyn std::error::Error>> {
-    if let Some(error) = backend.prelaunch_error() {
-        return Ok(ReviewJob::failed_unavailable(
-            issue.identifier.clone(),
-            backend.kind(),
-            error,
-        ));
-    }
-
-    match backend.start(request) {
-        Ok(job) => {
-            let spec = review_backend_progress_spec(config, issue, backend.kind(), &job);
-            Ok(run_with_progress_heartbeat(spec, || {
-                poll_review_job_until_terminal(
-                    backend,
-                    job,
-                    Duration::from_millis(config.review.timeout_ms),
-                    Duration::from_millis(500),
-                )
-            })?)
+    let backend: Box<dyn ReviewBackend> = match fake_outcome {
+        Some(outcome) => Box::new(FakeReviewBackend::new(outcome)),
+        None => review_backend_from_config(&config.review),
+    };
+    let receipt_path = publication::publication_path(config, &issue.identifier, claim, "starting");
+    let mut receipt = ReviewPublication::new(issue, claim);
+    receipt.prompt_fingerprint = Some(stable_recovery_hash(&request.prompt));
+    receipt.workspace = Some(request.workspace.clone());
+    receipt.save(&receipt_path)?;
+    let mut job = if let Some(error) = backend.prelaunch_error() {
+        ReviewJob::failed_unavailable(issue.identifier.clone(), backend.kind(), error)
+    } else {
+        match backend.start(request) {
+            Ok(mut job) => {
+                persist_review_job_ledger_record(&config.observability.logs_root, issue, &mut job)?;
+                receipt.job = Some(job.clone());
+                receipt.state = PublicationState::Running;
+                receipt.save(&receipt_path)?;
+                println!(
+                    "review_started issue={} run={} ledger={}",
+                    issue.identifier,
+                    job.id,
+                    job.ledger_path.as_ref().unwrap().display()
+                );
+                let spec = review_backend_progress_spec(config, issue, backend.kind(), &job);
+                let fallback = job.clone();
+                match run_with_progress_heartbeat(spec, || {
+                    poll_review_job_until_terminal(
+                        backend.as_ref(),
+                        job,
+                        Duration::from_millis(config.review.timeout_ms),
+                        Duration::from_millis(500),
+                    )
+                }) {
+                    Ok(job) => job,
+                    Err(error) => {
+                        let mut job = backend.cancel(fallback.clone()).unwrap_or(fallback);
+                        job.state = ReviewJobState::Failed;
+                        job.error = Some(error.to_string());
+                        job
+                    }
+                }
+            }
+            Err(error) => ReviewJob::failed_unavailable(
+                issue.identifier.clone(),
+                backend.kind(),
+                error.to_string(),
+            ),
         }
-        Err(error) => Ok(ReviewJob::failed_unavailable(
-            issue.identifier.clone(),
-            backend.kind(),
-            error.to_string(),
-        )),
-    }
+    };
+    persist_review_job_ledger_record(&config.observability.logs_root, issue, &mut job)?;
+    receipt.job = Some(job.clone());
+    receipt.state = PublicationState::ResultReady;
+    receipt.save(&receipt_path)?;
+    Ok(job)
 }
 
 fn review_backend_progress_spec(
@@ -991,104 +1156,271 @@ pub(crate) fn apply_review_result(
     workflow: Option<&WorkflowDefinition>,
     config: &RuntimeConfig,
     adapter: &dyn TrackerAdapter,
-    issue_ref: &str,
+    _issue_ref: &str,
     issue: &TrackerIssue,
     job: &shea_symphony::review::ReviewJob,
     claim: Option<&LaneClaim>,
     repeat_evidence: Option<&ReviewRepeatedFailureEvidence>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let issue_ref = &issue.identifier;
     let decision = review_gate_decision_for_issue(job, issue);
-    if let Some(value) = terminal_review_loop_claim_value(claim, job, &decision) {
+    if !shea_symphony::review::review_job_is_terminal(job) || job.issue_ref != *issue_ref {
+        return Err("Review publication requires a terminal result for this Issue".into());
+    }
+    if decision
+        .target_state
+        .is_some_and(|target| !transition_allowed_for_review_agent(target, &decision))
+    {
+        return Err("review agent transition is not allowed for this decision".into());
+    }
+    let path = publication::publication_path(config, issue_ref, claim, &job.id);
+    let mut receipt = if path.exists() {
+        ReviewPublication::read(&path)?
+    } else {
+        ReviewPublication::new(issue, claim)
+    };
+    if receipt.issue.id != issue.id
+        || receipt.claim != claim.map(LaneClaim::render)
+        || receipt.job.as_ref().is_some_and(|saved| saved.id != job.id)
+    {
+        return Err("Review publication identity mismatch".into());
+    }
+    if receipt.state == PublicationState::Complete {
+        return Ok(());
+    }
+    if receipt.state == PublicationState::Superseded {
+        return Err("Review result was superseded; inspect the retained receipt".into());
+    }
+    receipt.job = Some(job.clone());
+    if receipt.state != PublicationState::EvidencePublished {
+        receipt.state = PublicationState::ResultReady;
+    }
+    if receipt.evidence.is_none() {
+        receipt.evidence = Some(
+            repeat_evidence
+                .map(|e| render_repeated_review_failure_workpad(workflow, issue, job, e))
+                .unwrap_or_else(|| render_review_workpad_with_workflow(workflow, issue, job)),
+        );
+    }
+    receipt.save(&path)?;
+    let key = recovery_key(
+        "review-result",
+        issue_ref,
+        &format!("{}|{}", issue_ref, job.id),
+    );
+    let marker = crate::orchestration::tracker_recovery::tracker_recovery_marker(&key);
+    let terminal_claim = terminal_review_loop_claim_value(claim, job, &decision);
+    let fresh =
+        |receipt: &mut ReviewPublication| -> Result<TrackerIssue, Box<dyn std::error::Error>> {
+            let current = adapter
+                .get_issue(issue_ref)?
+                .ok_or("Review Issue disappeared during publication")?;
+            if let Err(reason) = validate_publication_freshness(
+                config,
+                issue,
+                &current,
+                claim,
+                terminal_claim.as_deref(),
+                &decision,
+                &marker,
+            ) {
+                receipt.state = PublicationState::Superseded;
+                receipt.diagnostic = Some(reason.clone());
+                receipt.save(&path)?;
+                return Err(reason.into());
+            }
+            Ok(current)
+        };
+    let current = fresh(&mut receipt)?;
+    if receipt.state == PublicationState::EvidencePublished
+        && !current
+            .description
+            .as_deref()
+            .is_some_and(|body| body.contains(&marker))
+    {
+        return Err("Previously published Review evidence is not visible; preserve the receipt and use targeted Doctor triage instead of duplicating the comment".into());
+    }
+    let outcome = add_timeline_comment_with_recovery(
+        adapter,
+        issue_ref,
+        Some(&current),
+        receipt.evidence.as_deref().unwrap(),
+        &key,
+        "timeline_comment",
+    )?;
+    if outcome.should_record_audit() {
+        append_tracker_mutation_audit(
+            config,
+            TrackerMutationAudit {
+                command: "review publication",
+                mutation_type: "timeline_comment",
+                issue_ref: Some(issue_ref),
+                target: Some(job.id.clone()),
+                from_state: Some(current.state.clone()),
+                to_state: decision.target_state.map(ToOwned::to_owned),
+                reason: "durable Review result evidence",
+            },
+        );
+    }
+    let mut current = fresh(&mut receipt)?;
+    if !current
+        .description
+        .as_deref()
+        .is_some_and(|body| body.contains(&marker))
+    {
+        return Err("Review evidence write is not visible in targeted readback; publication remains pending".into());
+    }
+    receipt.state = PublicationState::EvidencePublished;
+    receipt.save(&path)?;
+    if let Some(value) = terminal_claim.as_deref() {
         write_terminal_review_claim(
             config,
             adapter,
             issue_ref,
-            &issue.state,
-            &value,
-            "review loop terminal claim evidence",
+            &current.state,
+            value,
+            "evidence published for this Review run",
         )?;
+        current = fresh(&mut receipt)?;
+        if project_text_field(&current, "Review Agent").as_deref() != Some(value) {
+            return Err(
+                "Review terminal claim readback failed; publication remains pending".into(),
+            );
+        }
     }
     if decision.outcome.is_passed() {
         update_review_checklist_for_pass(
             config,
             adapter,
-            issue,
+            &current,
             decision.target_state.unwrap_or("none"),
         )?;
-    }
-    if let Some(target_state) = decision.target_state {
-        if !transition_allowed_for_review_agent(target_state, &decision) {
-            return Err("review agent transition is not allowed for this review decision".into());
-        }
-        if rework_transition_expected(&decision) {
-            transition_review_issue_to_rework_with_workpad(workflow, config, adapter, issue, job)?;
-            return Ok(());
-        }
-    }
-
-    let workpad = repeat_evidence
-        .map(|evidence| render_repeated_review_failure_workpad(workflow, issue, job, evidence))
-        .unwrap_or_else(|| render_review_workpad_with_workflow(workflow, issue, job));
-    let evidence_key = recovery_key(
-        "review-result",
-        issue_ref,
-        &format!(
-            "{}|{:?}|{}|{}",
-            issue_ref,
-            decision.outcome,
-            decision.target_state.unwrap_or("none"),
-            job.ledger_path
-                .as_ref()
-                .map(|path| path.display().to_string())
-                .unwrap_or_else(|| stable_recovery_hash(&workpad))
-        ),
-    );
-    let evidence_outcome = add_timeline_comment_with_recovery(
-        adapter,
-        issue_ref,
-        Some(issue),
-        &workpad,
-        &evidence_key,
-        "timeline_comment",
-    )?;
-    if evidence_outcome.should_record_audit() {
-        append_tracker_mutation_audit(
-            config,
-            TrackerMutationAudit {
-                command: "review loop",
-                mutation_type: "timeline_comment",
-                issue_ref: Some(issue_ref),
-                target: job
-                    .ledger_path
-                    .as_ref()
-                    .map(|path| path.display().to_string()),
-                from_state: Some(issue.state.clone()),
-                to_state: decision.target_state.map(ToOwned::to_owned),
-                reason: "review result timeline evidence",
-            },
+        current = fresh(&mut receipt)?;
+        let body = canonical_issue_body_without_workpad(
+            current.description.as_deref().unwrap_or_default(),
         );
+        if check_review_verified_issue_body_checkboxes(&body) != body {
+            return Err("Review checklist readback failed; publication remains pending".into());
+        }
     }
-    if let Some(target_state) = decision.target_state {
-        let state_outcome = set_state_with_recovery(
-            adapter,
-            issue_ref,
-            Some(issue),
-            target_state,
-            "state_change",
-        )?;
-        if state_outcome.should_record_audit() {
+    if let Some(target) = decision.target_state {
+        let outcome =
+            set_state_with_recovery(adapter, issue_ref, Some(&current), target, "state_change")?;
+        if outcome.should_record_audit() {
             append_tracker_mutation_audit(
                 config,
                 TrackerMutationAudit {
-                    command: "review loop",
+                    command: "review publication",
                     mutation_type: "state_change",
                     issue_ref: Some(issue_ref),
-                    target: None,
-                    from_state: Some(issue.state.clone()),
-                    to_state: Some(target_state.into()),
-                    reason: "review result routing",
+                    target: Some(job.id.clone()),
+                    from_state: Some(current.state.clone()),
+                    to_state: Some(target.into()),
+                    reason: "route only after evidence and supporting readbacks",
                 },
             );
+        }
+        current = fresh(&mut receipt)?;
+        if state_key(&current.state) != mapped_state_key(config, target) {
+            return Err("Review state readback failed; publication remains pending".into());
+        }
+    }
+    receipt.state = PublicationState::Complete;
+    receipt.save(&path)?;
+    Ok(())
+}
+
+fn state_key(state: &str) -> String {
+    normalize_state(state).replace('_', " ")
+}
+
+fn mapped_state_key(config: &RuntimeConfig, state: &str) -> String {
+    let map = &config.tracker.state_map;
+    state_key(match state {
+        "agent_review" => &map.agent_review,
+        "human_review" => &map.human_review,
+        "need_human_input" => &map.need_human_input,
+        "rework" => &map.rework,
+        "merging" => &map.merging,
+        _ => state,
+    })
+}
+
+fn validate_publication_freshness(
+    config: &RuntimeConfig,
+    original: &TrackerIssue,
+    current: &TrackerIssue,
+    claim: Option<&LaneClaim>,
+    terminal_claim: Option<&str>,
+    decision: &ReviewGateDecision,
+    marker: &str,
+) -> Result<(), String> {
+    if original.id != current.id || original.identifier != current.identifier {
+        return Err("Review Issue identity changed".into());
+    }
+    if crate::orchestration::tracker_recovery::issue_is_closed(current) {
+        return Err("Review Issue is closed; captured result cannot route it".into());
+    }
+    let evidence_present = current
+        .description
+        .as_deref()
+        .is_some_and(|body| body.contains(marker));
+    let target_matches = decision
+        .target_state
+        .is_some_and(|target| state_key(&current.state) == mapped_state_key(config, target));
+    if state_key(&current.state) != state_key(&config.tracker.state_map.agent_review)
+        && !(evidence_present && target_matches)
+    {
+        return Err("Review state changed outside this publication".into());
+    }
+    let original_body =
+        canonical_issue_body_without_workpad(original.description.as_deref().unwrap_or_default());
+    let current_body =
+        canonical_issue_body_without_workpad(current.description.as_deref().unwrap_or_default());
+    let own_checklist = evidence_present
+        && decision.outcome.is_passed()
+        && current_body == check_review_verified_issue_body_checkboxes(&original_body);
+    if original.title != current.title || (current_body != original_body && !own_checklist) {
+        return Err("Review Issue contract changed; captured result is stale".into());
+    }
+    let ready_prs = |issue: &TrackerIssue| {
+        issue
+            .linked_pull_requests
+            .iter()
+            .filter(|pr| {
+                pr.state
+                    .as_deref()
+                    .is_some_and(|state| state.eq_ignore_ascii_case("open"))
+            })
+            .map(|pr| {
+                (
+                    pr.url.clone(),
+                    pr.head_sha.clone(),
+                    pr.is_draft,
+                    pr.base_ref_name.clone(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let before = ready_prs(original);
+    let after = ready_prs(current);
+    if before.len() != 1
+        || before != after
+        || before[0].2 != Some(false)
+        || before[0].0.as_deref().is_none_or(str::is_empty)
+        || before[0].1.as_deref().is_none_or(str::is_empty)
+    {
+        return Err(
+            "Review PR linkage, readiness or head changed or is missing; captured result is stale"
+                .into(),
+        );
+    }
+    if let Some(claim) = claim {
+        let current_claim = project_text_field(current, "Review Agent");
+        if current_claim.as_deref() != Some(claim.render().as_str())
+            && !(evidence_present && current_claim.as_deref() == terminal_claim)
+        {
+            return Err("Review claim changed; this run no longer owns publication".into());
         }
     }
     Ok(())
@@ -1127,6 +1459,9 @@ pub(crate) fn update_review_checklist_for_pass(
 
 pub(crate) fn canonical_issue_body_without_workpad(description: &str) -> String {
     description
+        .split("<!-- shea-symphony-attached-evidence -->")
+        .next()
+        .unwrap_or(description)
         .split("<!-- shea-symphony-workpad -->")
         .next()
         .unwrap_or(description)
@@ -1264,74 +1599,5 @@ pub(crate) fn transition_issue_to_rework_with_diagnostic(
             reason: "confirmed review finding",
         },
     );
-    Ok(())
-}
-
-fn transition_review_issue_to_rework_with_workpad(
-    workflow: Option<&WorkflowDefinition>,
-    config: &RuntimeConfig,
-    adapter: &dyn TrackerAdapter,
-    issue: &TrackerIssue,
-    job: &ReviewJob,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let workpad = render_review_workpad_with_workflow(workflow, issue, job);
-    let evidence_key = recovery_key(
-        "review-rework",
-        &issue.identifier,
-        &format!(
-            "{}|{}",
-            issue.identifier,
-            job.ledger_path
-                .as_ref()
-                .map(|path| path.display().to_string())
-                .unwrap_or_else(|| stable_recovery_hash(&workpad))
-        ),
-    );
-    let evidence_outcome = add_timeline_comment_with_recovery(
-        adapter,
-        &issue.identifier,
-        Some(issue),
-        &workpad,
-        &evidence_key,
-        "timeline_comment",
-    )?;
-    if evidence_outcome.should_record_audit() {
-        append_tracker_mutation_audit(
-            config,
-            TrackerMutationAudit {
-                command: "review loop",
-                mutation_type: "timeline_comment",
-                issue_ref: Some(&issue.identifier),
-                target: job
-                    .ledger_path
-                    .as_ref()
-                    .map(|path| path.display().to_string()),
-                from_state: Some(issue.state.clone()),
-                to_state: Some("rework".into()),
-                reason: "review result timeline evidence",
-            },
-        );
-    }
-    let state_outcome = set_state_with_recovery(
-        adapter,
-        &issue.identifier,
-        Some(issue),
-        "rework",
-        "state_change",
-    )?;
-    if state_outcome.should_record_audit() {
-        append_tracker_mutation_audit(
-            config,
-            TrackerMutationAudit {
-                command: "review loop",
-                mutation_type: "state_change",
-                issue_ref: Some(&issue.identifier),
-                target: None,
-                from_state: Some(issue.state.clone()),
-                to_state: Some("rework".into()),
-                reason: "confirmed review finding",
-            },
-        );
-    }
     Ok(())
 }

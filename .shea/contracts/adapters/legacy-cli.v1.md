@@ -70,3 +70,25 @@ quality preparation surface for create, promote, and rework decisions.
   mutation until readback proves `not_applied` and preparation still matches.
 - Preserve recovery markers and exact linked-PR source values as evidence; do
   not upgrade diagnostic fallback evidence to native linkage.
+
+## Guarded Independent Review
+
+The selected runtime must expose `review recover --help`; an older runtime that
+lacks this command is not compatible with this publication protocol.
+
+| Semantic capability | Prepare / inspect | Execute | Targeted read-back |
+| --- | --- | --- | --- |
+| `review.once` | `CLI review once WORKFLOW ISSUE` | Same command with `--write` | `review.status`, `issue.read`, `evidence.read` and current PR head |
+| `review.status` | `CLI review status WORKFLOW --issue ISSUE --json` | Read-only | Run identity, ledger and `pending_publications` |
+| `review.recover` | `CLI review recover WORKFLOW ISSUE` | Same command with `--write` | Same run's evidence marker, claim, supported checklist and final normalized state |
+
+`review.once` owns the claim and backend invocation. Do not precede it with
+`review claim` or manually synthesize its result. A Project status change alone
+is not dispatch. A terminal result with pending publication must use recovery,
+not another backend run. Starting/running receipts without a captured terminal
+job require Doctor process/artifact triage; do not clear them speculatively.
+
+The runtime publishes and reads back evidence before the terminal claim,
+checklist and final state. It refuses a changed Issue contract, PR head,
+readiness or claim. The local OS lock coordinates callers sharing one logs root;
+separate hosts still require a single designated coordinator.

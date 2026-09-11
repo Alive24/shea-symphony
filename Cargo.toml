@@ -13,6 +13,7 @@ path = "src/legacy.rs"
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 crossterm = "0.28"
+fs2 = "0.4.3"
 futures = "0.3.32"
 futures-util = "0.3.32"
 liquid = "0.26.11"

@@ -25,6 +25,9 @@ pub(in crate::tracker) fn github_issue_description_with_workpad(
     if !body.trim().is_empty() {
         sections.push(body);
     }
+    if workpad.is_some() || !timeline_comments.is_empty() {
+        sections.push("<!-- shea-symphony-attached-evidence -->".into());
+    }
     if let Some(workpad) = workpad {
         sections.push(workpad);
     }

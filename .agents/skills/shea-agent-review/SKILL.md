@@ -63,3 +63,17 @@ findings; never manufacture a PASS or manually rewrite the recorded result.
 Confirmed findings may coexist with needs_context; they require Rework and the
 missing context remains in the evidence. A fresh review is a new run, not an edit
 of the failed run's artifacts.
+
+## Dispatch and completion receipts
+
+Use the adapter's guarded `review.once` operation for the authorized Issue. Agent
+Review status alone is a handoff, not proof that the backend started. Report a
+start only with backend acknowledgement and a run ID. Completion requires the
+terminal ledger, append-only Review Run evidence and final normalized state to
+be read back for the reviewed PR head.
+
+When a terminal result exists but publication is incomplete, inspect
+`review.status` and prepare `review.recover` for the same run. Do not launch a
+new reviewer to repair a missing comment. Starting/running receipts without a
+captured terminal result need Doctor process/artifact triage. Never fabricate a
+PASS, discard confirmed findings or clear a live claim to enable a retry.

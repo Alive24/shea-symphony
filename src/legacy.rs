@@ -211,6 +211,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             issue_ref,
             write,
         } => review_once(workflow_path, issue_ref, write),
+        Command::ReviewRecover {
+            workflow_path,
+            issue_ref,
+            write,
+        } => crate::lanes::review::review_recover(workflow_path, issue_ref, write),
         Command::ReviewClaim {
             workflow_path,
             issue_ref,

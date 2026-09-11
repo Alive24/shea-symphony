@@ -86,10 +86,31 @@ pub(crate) fn review_status(
         unix_timestamp_ms(),
     )?;
 
+    let publications = issues.iter().filter_map(|issue| {
+        match super::publication::pending_publication(&config, &issue.identifier) {
+            Ok(Some((path, receipt))) => Some(serde_json::json!({
+                "issue_ref": issue.identifier, "state": receipt.state, "receipt_path": path,
+                "run_id": receipt.job.as_ref().map(|job| &job.id),
+                "runtime_revision": receipt.runtime_revision,
+                "terminal_result_captured": super::publication::require_terminal(&receipt).is_ok(),
+                "diagnostic": receipt.diagnostic,
+            })),
+            Ok(None) => None,
+            Err(error) => Some(serde_json::json!({"issue_ref": issue.identifier, "diagnostic": error.to_string()})),
+        }
+    }).collect::<Vec<_>>();
     if options.json {
+        let mut payload = serde_json::to_value(&payload)?;
+        payload
+            .as_object_mut()
+            .ok_or("Review status must be an object")?
+            .insert("pending_publications".into(), publications.into());
         println!("{}", serde_json::to_string_pretty(&payload)?);
     } else {
         println!("{}", render_review_status_human(&payload, options.verbose));
+        for publication in publications {
+            println!("review_publication={publication}");
+        }
     }
     Ok(())
 }

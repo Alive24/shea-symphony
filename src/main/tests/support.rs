@@ -161,6 +161,8 @@ pub(crate) struct RecordingAdapter {
     pub(crate) fail_comment: bool,
     pub(crate) fail_link_pr: bool,
     pub(crate) fail_state_after_apply: bool,
+    pub(crate) fail_state_before_apply: bool,
+    pub(crate) change_review_head_after_comment: bool,
     pub(crate) fail_project_field_after_apply: bool,
     pub(crate) fail_workpad_after_apply: bool,
     pub(crate) fail_comment_after_apply: bool,
@@ -180,6 +182,8 @@ impl Default for RecordingAdapter {
             fail_comment: false,
             fail_link_pr: false,
             fail_state_after_apply: false,
+            fail_state_before_apply: false,
+            change_review_head_after_comment: false,
             fail_project_field_after_apply: false,
             fail_workpad_after_apply: false,
             fail_comment_after_apply: false,
@@ -245,6 +249,13 @@ impl TrackerAdapter for RecordingAdapter {
         issue_ref: &str,
         normalized_state: &str,
     ) -> Result<(), shea_symphony::tracker::TrackerError> {
+        if self.fail_state_before_apply {
+            return Err(
+                shea_symphony::tracker::TrackerError::IntegrationUnavailable(
+                    "state write unavailable".into(),
+                ),
+            );
+        }
         if let Some(issue) = self.issues.borrow_mut().get_mut(issue_ref) {
             issue.state = normalize_state(normalized_state);
         }
@@ -301,7 +312,17 @@ impl TrackerAdapter for RecordingAdapter {
     ) -> Result<(), shea_symphony::tracker::TrackerError> {
         if let Some(issue) = self.issues.borrow_mut().get_mut(issue_ref) {
             issue.title = title.to_string();
-            issue.description = Some(body.to_string());
+            let attached = issue
+                .description
+                .as_deref()
+                .and_then(|s| s.split_once("<!-- shea-symphony-attached-evidence -->"))
+                .map(|(_, evidence)| evidence.to_string());
+            issue.description = Some(match attached {
+                Some(evidence) => {
+                    format!("{body}\n\n<!-- shea-symphony-attached-evidence -->{evidence}")
+                }
+                None => body.to_string(),
+            });
         }
         self.operations
             .borrow_mut()
@@ -336,8 +357,16 @@ impl TrackerAdapter for RecordingAdapter {
             if !description.is_empty() {
                 description.push_str("\n\n");
             }
+            if !description.contains("<!-- shea-symphony-attached-evidence -->") {
+                description.push_str("<!-- shea-symphony-attached-evidence -->\n\n");
+            }
             description.push_str(markdown);
             issue.description = Some(description);
+        }
+        if self.change_review_head_after_comment {
+            if let Some(issue) = self.issues.borrow_mut().get_mut(issue_ref) {
+                issue.linked_pull_requests[0].head_sha = Some("new-head-during-publication".into());
+            }
         }
         if self.fail_comment_after_apply {
             return Err(

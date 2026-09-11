@@ -1,5 +1,6 @@
 mod automatic;
 mod manual;
+mod publication;
 mod status;
 
 #[cfg(test)]
@@ -12,7 +13,7 @@ pub(crate) use automatic::{
 };
 pub(crate) use automatic::{
     review_backend_kind, review_fake, review_loop, review_loop_with_summary, review_once,
-    select_review_worker_issues, ReviewLoopOptions, ReviewLoopSummary,
+    review_recover, select_review_worker_issues, ReviewLoopOptions, ReviewLoopSummary,
 };
 #[cfg(test)]
 pub(crate) use manual::{

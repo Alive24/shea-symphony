@@ -361,7 +361,7 @@ fn execute_claude_review(input: ClaudeReviewExecution) -> Result<ClaudeReviewOut
 fn claude_review_prompt(prompt: &str) -> String {
     let schema = serde_json::to_string_pretty(&review_output_schema())
         .expect("static Claude Review schema serializes");
-    format!("{prompt}\n\n## Required Native JSON Schema\n\n{schema}")
+    format!("{prompt}\n\n## Required Native JSON Schema\n\n{schema}\n\nWhen calling StructuredOutput, supply summary, terminal_classification and findings as three sibling JSON properties. Findings is an array of JSON objects, not a quoted string. Do not serialize tool arguments with XML tags or embed other properties inside summary. Choose pass only when independent inspection establishes no blocking finding.")
 }
 
 /// Review-specific arguments shown without embedding the full schema in

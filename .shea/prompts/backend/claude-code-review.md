@@ -22,3 +22,6 @@ Verify the local revision against its PR head before reviewing. Record unavailab
 network, build or desktop checks explicitly; never count Main evidence as an
 independent pass. Human UAT alone is not missing review context unless required by
 the Issue contract. Do not disable sandboxing or repeat denied permission requests.
+
+Missing context without a confirmed defect routes to Need Human Input. A rejected
+structured result is retained as unaccepted diagnostics and cannot approve a PR.

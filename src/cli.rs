@@ -183,6 +183,11 @@ pub(crate) enum Command {
         issue_ref: String,
         write: bool,
     },
+    ReviewRecover {
+        workflow_path: PathBuf,
+        issue_ref: String,
+        write: bool,
+    },
     ReviewClaim {
         workflow_path: PathBuf,
         issue_ref: String,
@@ -1333,6 +1338,7 @@ struct ReviewArgs {
 enum ReviewCommandArgs {
     Fake(ReviewFakeArgs),
     Once(ReviewOnceArgs),
+    Recover(ReviewOnceArgs),
     Claim(LaneClaimArgs),
     ClearClaim(ReviewClearClaimArgs),
     Pass(ReviewEvidenceArgs),
@@ -1952,6 +1958,11 @@ fn command_from_review_args(command: ReviewCommandArgs) -> Result<Command, Strin
             write: args.write,
         }),
         ReviewCommandArgs::Once(args) => Ok(Command::ReviewOnce {
+            workflow_path: args.workflow_path,
+            issue_ref: args.issue_ref,
+            write: args.write,
+        }),
+        ReviewCommandArgs::Recover(args) => Ok(Command::ReviewRecover {
             workflow_path: args.workflow_path,
             issue_ref: args.issue_ref,
             write: args.write,

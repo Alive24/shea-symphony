@@ -24,3 +24,7 @@ Use only the wrapper's native structured-result channel. Do not emit a legacy
 `Review Result:` marker or surrounding prose. Pass requires zero blocking
 findings, rework requires confirmed findings, and needs_context requires a
 Needs Context finding. Leave routing and persistence to the outer runtime.
+
+Retain confirmed findings even when other findings need context. Only context
+without a confirmed defect routes to Need Human Input. `note` is a severity, not
+a finding class. Optional non-blocking observations must not invent missing facts.

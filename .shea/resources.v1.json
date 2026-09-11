@@ -43,7 +43,8 @@
         { "kind": "template", "path": "template/decision/human-review.md" },
         { "kind": "documentation", "path": "../docs/prompt-template-contract.md" },
         { "kind": "documentation", "path": "../docs/installable-resource-contract.md" },
-        { "kind": "documentation", "path": "../docs/template-consumer-audit.md" }
+        { "kind": "documentation", "path": "../docs/template-consumer-audit.md" },
+        { "kind": "documentation", "path": "../docs/review-publication.md" }
       ]
     },
     "deepen": {

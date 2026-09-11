@@ -2,6 +2,7 @@
 #![deny(missing_docs)]
 
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
@@ -240,14 +241,42 @@ pub fn write_review_job_ledger_record(
         "{}.json",
         safe_identifier(&format!("{}-{}", issue.identifier, job.id))
     ));
-    let record = review_job_ledger_record(issue, job, path.clone());
+    let mut record = review_job_ledger_record(issue, job, path.clone());
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .min(u128::from(u64::MAX)) as u64;
+    let previous = if path.exists() {
+        Some(
+            serde_json::from_slice::<ReviewJobLedgerRecord>(
+                &fs::read(&path).map_err(|error| ReviewError::Artifact(error.to_string()))?,
+            )
+            .map_err(|error| ReviewError::Artifact(error.to_string()))?,
+        )
+    } else {
+        None
+    };
+    record.started_at_ms = previous
+        .as_ref()
+        .and_then(|prior| prior.started_at_ms)
+        .or(Some(now));
+    record.updated_at_ms = Some(now);
     let body = serde_json::to_string_pretty(&record)
         .map_err(|error| ReviewError::Artifact(error.to_string()))?;
-    fs::write(&path, body).map_err(|error| ReviewError::Artifact(error.to_string()))?;
+    let mut staged = tempfile::NamedTempFile::new_in(&job_root)
+        .map_err(|error| ReviewError::Artifact(error.to_string()))?;
+    staged
+        .write_all(body.as_bytes())
+        .and_then(|()| staged.as_file().sync_all())
+        .map_err(|error| ReviewError::Artifact(error.to_string()))?;
+    staged
+        .persist(&path)
+        .map_err(|error| ReviewError::Artifact(error.to_string()))?;
     Ok(path)
 }
 
-/// Persists a terminal Review job ledger and attaches its path to the job used
+/// Persists a running or terminal Review job ledger and attaches its path to the job used
 /// by downstream evidence and routing surfaces.
 pub fn persist_review_job_ledger_record(
     logs_root: &Path,

@@ -33,14 +33,19 @@
   let readinessBusy = false;
   let readinessMessage = '';
   let readinessFailed = false;
+  let readinessWorkspace = '';
+  $: if (readinessWorkspace !== workspaceProfile.targetRoot) readinessMessage = '';
   async function checkReadiness() {
+    const target = workspaceProfile.targetRoot;
+    readinessWorkspace = target;
     readinessBusy = true;
     readinessMessage = '';
     try {
       const result = await getAppReadiness();
+      if (workspaceProfile.targetRoot !== target) return;
       readinessFailed = !result.ready;
       readinessMessage = `Legacy CLI ${result.runtime.source_revision.slice(0, 8)} · local resources and environment ready. Issue eligibility is checked separately.`;
-    } catch (error) { readinessFailed = true; readinessMessage = String(error); }
+    } catch (error) { if (workspaceProfile.targetRoot === target) { readinessFailed = true; readinessMessage = String(error); } }
     finally { readinessBusy = false; }
   }
 

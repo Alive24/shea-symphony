@@ -1,18 +1,12 @@
 ---
 name: shea-check
-description: Refresh and assess current Shea Symphony execution posture without changing it. Use when an operator asks whether a named issue can proceed, what is running or blocked, what changed while they were away, what can run in parallel, or which Shea lane or repair Skill should handle the next action.
+description: Report current Shea execution posture and the next lane without changing anything. Use when the user asks what is running, blocked or ready, or which lane Skill should act next. Do not use to diagnose an observed failure, to repair anything, or to start a lane.
 ---
 
 # Shea Check (Claude Code entry point)
 
-This repository keeps one authoritative body for every operational Skill under
-`.agents/skills/`, shared by all supported harnesses. This file only makes that
-body discoverable from Claude Code; it adds no policy, permission, lane
-authority or step of its own.
-
-Read `.agents/skills/shea-check/SKILL.md` (relative to the repository root) now and
-follow it verbatim, including every reference it resolves. Use
-`docs/README.md` to route to the narrowest authoritative repository context.
-
-If this file and the `.agents/` body ever disagree, the `.agents/` body wins;
-report the divergence instead of reconciling it here.
+`.agents/skills/shea-check/SKILL.md` is the authoritative body of this Skill, shared
+by every supported harness. Read it now and follow it verbatim, including every
+reference it resolves. This file only makes that body discoverable; it carries
+no policy, permission or lane authority. Use `docs/README.md` to route to the narrowest authoritative repository context, and the `.agents/` body wins on any
+disagreement.

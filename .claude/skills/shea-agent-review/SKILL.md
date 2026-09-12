@@ -1,18 +1,12 @@
 ---
 name: shea-agent-review
-description: Trigger one independent Shea Symphony Agent Review for a named ready issue through the external Review backend selected by the active workflow, then read back its recorded decision and routing.
+description: Run one independent Shea Review of a named ready Issue through the workflow's configured Review backend, then read back its decision and routing. Use when the user names an Issue in Agent Review and asks to start or recover that review. Do not use to review work yourself, to implement, to decide Human Review, or to merge.
 ---
 
 # Shea Agent Review (Claude Code entry point)
 
-This repository keeps one authoritative body for every operational Skill under
-`.agents/skills/`, shared by all supported harnesses. This file only makes that
-body discoverable from Claude Code; it adds no policy, permission, lane
-authority or step of its own.
-
-Read `.agents/skills/shea-agent-review/SKILL.md` (relative to the repository root) now and
-follow it verbatim, including every reference it resolves. Use
-`docs/README.md` to route to the narrowest authoritative repository context.
-
-If this file and the `.agents/` body ever disagree, the `.agents/` body wins;
-report the divergence instead of reconciling it here.
+`.agents/skills/shea-agent-review/SKILL.md` is the authoritative body of this Skill, shared
+by every supported harness. Read it now and follow it verbatim, including every
+reference it resolves. This file only makes that body discoverable; it carries
+no policy, permission or lane authority. Use `docs/README.md` to route to the narrowest authoritative repository context, and the `.agents/` body wins on any
+disagreement.

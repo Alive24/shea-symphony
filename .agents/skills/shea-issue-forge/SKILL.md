@@ -1,6 +1,6 @@
 ---
 name: shea-issue-forge
-description: Shape rough operator intent into a quality-gated Shea issue through focused discussion, explicit confirmation, and guarded creation, promotion, or rework.
+description: Turn the user's intent into a quality-gated executable Shea Issue contract, then create, promote or rework it after explicit confirmation. Use when the user wants a new Issue, a Backlog seed promoted, or a Human Review rework scope written. Do not use to execute the resulting Issue or to record execution progress.
 ---
 
 # Shea Issue Forge

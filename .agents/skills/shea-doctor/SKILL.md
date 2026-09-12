@@ -35,18 +35,7 @@ the runtime profile, or restore repository resources from upstream.
 
 ## Repository contract repair
 
-Use `repository_contract_repair` only for repository-owned Markdown contracts such as normal operational Skills, prompts, workpads, capability references, and operator docs. Read `references/repository-contract-repair.md` and classify findings as:
-
-- `missing_completion_invariant`
-- `duplicated_instruction`
-- `contradictory_instruction`
-- `wrong_layer_instruction`
-- `lane_leakage`
-- `excessive_procedure`
-- `unused_workpad_structure`
-- `stale_or_unreachable_text`
-- `unsafe_simplification`
-- `no_change`
+Use `repository_contract_repair` only for repository-owned Markdown contracts such as normal operational Skills, prompts, workpads, capability references, and operator docs. Read `references/repository-contract-repair.md` and classify each finding as one of `missing_completion_invariant`, `duplicated_instruction`, `contradictory_instruction`, `wrong_layer_instruction`, `lane_leakage`, `excessive_procedure`, `unused_workpad_structure`, `stale_or_unreachable_text`, `unsafe_simplification` or `no_change`.
 
 Produce Observed evidence, Doctor inference, the complete allowed path set, preserved authority invariants, and verification. Show a focused unified diff before writing. Refuse edits outside the confirmed set or any proposal that weakens confirmation, fail-closed behavior, targeted reads, state-last ordering, independent Review, Human authority, PR linkage, or recovery evidence.
 

@@ -1,6 +1,6 @@
 ---
 name: shea-backlog
-description: Capture and organize bounded Shea Symphony Backlog memory, deduplicate or review stale seeds, and route operator-selected candidates to Issue Forge without promoting or executing them. Use when an operator wants to remember future work, add a Backlog seed, or organize, prune, or reconsider existing Backlog items.
+description: Capture and organize bounded Shea Backlog memory and route selected seeds to Issue Forge. Use when the user wants to remember future work, add a seed, or prune or reconsider existing seeds. Do not use to promote a seed, write an Issue contract, or execute any lane.
 ---
 
 # Shea Symphony Backlog

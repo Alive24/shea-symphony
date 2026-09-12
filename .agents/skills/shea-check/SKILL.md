@@ -1,6 +1,6 @@
 ---
 name: shea-check
-description: Refresh and assess current Shea Symphony execution posture without changing it. Use when an operator asks whether a named issue can proceed, what is running or blocked, what changed while they were away, what can run in parallel, or which Shea lane or repair Skill should handle the next action.
+description: Report current Shea execution posture and the next lane without changing anything. Use when the user asks what is running, blocked or ready, or which lane Skill should act next. Do not use to diagnose an observed failure, to repair anything, or to start a lane.
 ---
 
 # Shea Check

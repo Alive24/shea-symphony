@@ -1,6 +1,6 @@
 ---
 name: shea-manual-merge
-description: Execute one supervised Shea Symphony Merging-lane issue, including guarded landing, safe stale-base or conflict repair on the existing reviewed PR branch, evidence, and final readback.
+description: Merge one user-designated approved Shea Issue, repairing a stale base or conflicts on the existing reviewed PR branch when needed. Use when the user names an Issue in Merging with recorded approval. Do not use to implement new scope, to re-review, or to merge without approval evidence.
 metadata:
   short-description: Run one supervised merge lane
 ---

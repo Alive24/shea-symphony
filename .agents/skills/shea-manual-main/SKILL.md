@@ -1,6 +1,6 @@
 ---
 name: shea-manual-main
-description: Execute one operator-selected Shea Symphony Main-lane issue now, including guarded Todo, authorized Backlog, resumable In Progress, or Main Rework implementation through a ready PR and Agent Review handoff.
+description: Implement one user-designated Shea Main Issue in this task and hand a ready PR to Agent Review. Use when the user names a Todo, Main Rework, resumable In Progress, or explicitly authorized Backlog Issue to execute now. Do not use to review your own work, to decide Human Review, or to merge.
 metadata:
   short-description: Execute one manual Shea Main issue
 ---

@@ -1,6 +1,6 @@
 ---
 name: shea-human-review
-description: Brief a Shea Symphony operator after independent Review, guide operator-owned UAT and narrow authorized remediation, record explicit decisions, and route only after confirmation.
+description: Brief the user after independent Review, guide operator-owned UAT, and record the confirmed decision. Use when the user asks to run or record Human Review for a named Issue. Do not use to perform the independent review, to implement beyond authorized UAT repair, or to merge.
 metadata:
   short-description: Guide operator-owned Human Review
 ---

@@ -1,6 +1,6 @@
 ---
 name: setup-shea
-description: Onboard or reconcile Shea Symphony in a target repository from one immutable stable GitHub release. Use for initial project-local setup, incomplete setup, environment drift, operator-requested reconciliation, or runtime-profile and repository-contract problems routed back from Doctor.
+description: Onboard or reconcile Shea Symphony in a target repository from one immutable stable release. Use when setup is missing or incomplete, or when Doctor routes a runtime-profile or repository-contract problem back to setup. Do not use to execute a lane or to overwrite an onboarded repository's own customizations.
 ---
 
 # Setup Shea

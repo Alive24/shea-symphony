@@ -92,6 +92,44 @@ fn agents_skills_is_the_only_complete_first_party_inventory() {
 }
 
 #[test]
+fn interaction_language_rule_is_findable_and_single_sourced() {
+    // Both harnesses load a root instruction file automatically: Codex reads
+    // AGENTS.md natively and CLAUDE.md imports it for Claude Code. A rule that
+    // only lives in a routed document is not reliably read, and a rule copied
+    // into every Skill drifts apart, so it is stated once, here, as an instruction.
+    let agents = repo_file("AGENTS.md");
+    assert!(
+        agents.lines().any(|line| line == "## Interaction Language"),
+        "AGENTS.md has no Interaction Language section"
+    );
+    assert!(
+        agents.contains("Reply to the user in the language the user writes to you in"),
+        "AGENTS.md no longer states the reply-language rule as an instruction"
+    );
+    assert!(
+        agents.contains("Write everything that is persisted in English"),
+        "AGENTS.md no longer states the English-persistence rule"
+    );
+    assert!(
+        repo_file("CLAUDE.md").lines().any(|line| line == "@AGENTS.md"),
+        "CLAUDE.md no longer imports AGENTS.md, so Claude Code would not receive the shared rules"
+    );
+
+    for skill in CANONICAL_SKILLS {
+        let source = skill_file(skill, "SKILL.md");
+        for phrase in [
+            "language the user writes to you in",
+            "unless the user explicitly requests another language",
+        ] {
+            assert!(
+                !source.contains(phrase),
+                "{skill}/SKILL.md restates the interaction-language rule; it belongs only in AGENTS.md"
+            );
+        }
+    }
+}
+
+#[test]
 fn canonical_skill_frontmatter_metadata_and_resources_are_structurally_valid() {
     for skill in CANONICAL_SKILLS {
         let root = repo_path(&format!(".agents/skills/{skill}"));

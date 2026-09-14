@@ -20,7 +20,7 @@ This package implements decisions from:
 - `ISSUE-WORKFLOW-STATE.md`;
 - `WORKFLOW-ACTIVATION.md`;
 - `ACTIVITY-ERROR-TAXONOMY.md`;
-- `TRACKER-TRANSITION-ACTIVITY.md`;
+- `T2607-04-tracker-transition-activity.md`;
 - `AGENT-ACTIVITY-CONTRACT.md`;
 - `OPERATOR-ACTION-BRIDGE.md`.
 
@@ -258,6 +258,12 @@ When transition returns:
 
 Workflow code must not force-write around `expected_from_state` conflicts.
 
+A handler has not completed its handoff until all policy-required tracker
+mutations and readbacks succeed. Local agent completion, a pushed branch, or a
+successful write call is evidence of progress, not workflow completion. If a
+commit cannot be confirmed, retain the execution evidence and route to retry,
+reconciliation, or a structured human wait.
+
 ## Activity Routing
 
 Activity outcomes are normalized before Workflow routing.
@@ -404,6 +410,47 @@ Possible outcomes:
 - malformed internal state: `failed_unhandled_error`.
 
 Do not bounce merge-time semantic fix failure to `Rework` by default.
+
+## Need-State Reasons
+
+Static waits use a closed reason code plus optional human-readable detail.
+Initial `Need to Clarify` reasons are:
+
+- `missing_contract`;
+- `ambiguous_scope`;
+- `insufficient_acceptance_criteria`;
+- `conflicting_requirements`.
+
+Initial `Need Human Input` reasons are:
+
+- `requires_secret`;
+- `requires_external_account`;
+- `dangerous_operation`;
+- `external_service_failure`;
+- `manual_decision_required`;
+- `local_environment_blocked`;
+- `tracker_state_conflict`;
+- `merge_semantic_fix_failed`.
+
+The enum supports routing and filtering. Detail explains the concrete blocker
+without expanding the state vocabulary.
+
+## Human Review To Merging
+
+An operator may request `Rework`, approve the reviewed result, or make a small
+fix before requesting `Merging`. Before merge work begins,
+`HumanReviewValidationActivity` verifies the current external facts:
+
+- the PR still exists;
+- branch freshness satisfies repository policy;
+- required checks pass or have an explicit operator acceptance;
+- changes since the last Agent Review are summarized;
+- human-authored modifications are acknowledged;
+- required review comments are resolved or explicitly deferred.
+
+Materially risky changes route back to `Agent Review` or `Rework`. A semantic
+fix that the merge boundary cannot complete safely routes to `Need Human Input`
+with reason `merge_semantic_fix_failed`, not to `Rework` by default.
 
 ## Need Human Input Resumption
 
